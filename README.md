@@ -1,6 +1,6 @@
 # Center face
 # Center face detection model
-![img1](https://github.com/nvlong21/CenterFace/test/27.jpg)
+![img1](https://github.com/nvlong21/CenterFace/blob/master/test/centerface.jpg)
 This model is a lightweight facedetection model designed for edge computing devices
 ## Tested the environment that works
 - Ubuntu16.04、Ubuntu18.04、Windows 10（for inference）
