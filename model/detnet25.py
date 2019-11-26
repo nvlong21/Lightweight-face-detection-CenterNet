@@ -263,12 +263,6 @@ class ShuffleNetV2(nn.Module):
         self.shuff_16 = ShuffleV2Block(inp, outp, mid_channels=outp // 2, ksize=3, stride=stride)
         self.conv_last      = conv_1x1_bn(input_channel, self.stage_out_channels[-1])
         self.conv_compress = nn.Conv2d(self.stage_out_channels[-1], 512, kernel_size = 1, stride = 1, padding=0, bias=False)
-        # self.trunk = nn.Sequential(
-        #     UShapedContextBlock(464, False),
-        #     RefinementStageBlock(464, 256),
-        #     RefinementStageBlock(256, 256),
-        #     RefinementStageBlock(256, 64),
-        # )
 
         self.duc1 = DUC(512, 1024, upscale_factor=2)
         self.duc2 = DUC(256, 512, upscale_factor=2)
@@ -315,9 +309,8 @@ class ShuffleNetV2(nn.Module):
         x = self.shuff_14(x)
         x = self.shuff_15(x)
         x= self.shuff_16(x)
+        # x = self.conv_last(x)
         x = self.conv_compress(x)
-        # x = self.trunk(x)
-        # print(x.size())
         # 
         x = self.duc1(x)
         x = self.duc2(x)
@@ -326,6 +319,8 @@ class ShuffleNetV2(nn.Module):
         z = {}
         for head in self.heads:
             z[head] = self.__getattr__(head)(x)
+            if 'hm' in head and not self.training:
+                z[head] = F.sigmoid(z[head])
         return [z]
 
         
@@ -358,8 +353,7 @@ if __name__ == "__main__":
     
     model = ShuffleNetV2().cuda()
     model.eval()
-    test_data = torch.rand(1, 3, 124, 153).cuda()
-    test_data_2 = torch.rand(5, 1, 5)#.cuda()
+    test_data = torch.rand(1, 3, 640, 640).cuda()
     for i in range(15):
         t = time.time()
         test_outputs = model(test_data) #, test_data_2]

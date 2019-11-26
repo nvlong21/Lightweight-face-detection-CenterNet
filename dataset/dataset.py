@@ -92,29 +92,27 @@ class CenterFaceData(data.Dataset):
         num_objs = min(len(anns), self.max_objs)
         height, width = img.shape[0], img.shape[1]
         c = np.array([img.shape[1] / 2., img.shape[0] / 2.], dtype=np.float32)
-
         s = max(img.shape[0], img.shape[1]) * 1.0
         input_h, input_w = self.default_resolution[0], self.default_resolution[1]
-        
-        s = s * np.random.choice(np.arange(0.6, 1.4, 0.1))
-        w_border = self._get_border(128, img.shape[1])
-        h_border = self._get_border(128, img.shape[0])
-        c[0] = np.random.randint(low=w_border, high=img.shape[1] - w_border)
-        c[1] = np.random.randint(low=h_border, high=img.shape[0] - h_border)
 
         flipped = False
-        if np.random.random() < 0.5:
-            flipped = True
-            img = img[:, ::-1, :]
-            c[0] =  width - c[0] - 1
+        if self.split == 'train':
+            s = s * np.random.choice(np.arange(0.6, 1.4, 0.1))
+            w_border = self._get_border(128, img.shape[1])
+            h_border = self._get_border(128, img.shape[0])
+            c[0] = np.random.randint(low=w_border, high=img.shape[1] - w_border)
+            c[1] = np.random.randint(low=h_border, high=img.shape[0] - h_border)
+
+            if np.random.random() < 0.5:
+                flipped = True
+                img = img[:, ::-1, :]
+                c[0] =  width - c[0] - 1
                 
         trans_input = get_affine_transform(
             c, s, 0, [input_w, input_h])
         inp = cv2.warpAffine(img, trans_input, 
                          (input_w, input_h),
                          flags=cv2.INTER_LINEAR)
-        img2 = inp.copy()
-
         inp = (inp.astype(np.float32) / 255.)
         # if self.split == 'train':
         color_aug(self._data_rng, inp, self._eig_val, self._eig_vec)
@@ -136,9 +134,8 @@ class CenterFaceData(data.Dataset):
 
         draw_gaussian = draw_msra_gaussian if self.mse_loss else \
                                         draw_umich_gaussian
-        gt_det = []
+        
         cls_id = 0
-
         for k in range(num_objs):
             ann = anns[k]
             bbox = np.array(ann[:4].copy())
@@ -147,7 +144,7 @@ class CenterFaceData(data.Dataset):
             bbox = self._coco_box_to_bbox(bbox)
             lm = []
             for i in range(5):
-                if ann[4]>0:
+                if  self.split =='train' and ann[4]>0:
                     x = (ann[4 + 3 * i] - x_o)/ (w_o + 1e-14)
                     y = (ann[4 + 3 * i + 1] - y_o)/(h_o + 1e-14)
                     _lm = [x, y]
@@ -178,23 +175,23 @@ class CenterFaceData(data.Dataset):
                 reg[k] = ct - ct_int
                 reg_mask[k] = 1
 
-                # draw_dense_reg(dense_wh, hm.max(axis=0), ct_int, wh[k], radius)
-                gt_det.append([ct[0] - w / 2, ct[1] - h / 2, 
-                                             ct[0] + w / 2, ct[1] + h / 2, 1, cls_id])
-            
+                
                 landmarks[k] = lm
 
         ret = {'input': inp, 'hm': hm, 'lm':landmarks,'reg_mask': reg_mask, 'ind': ind, 'wh': wh, 'reg': reg}
-        # hm_a = hm.max(axis=0, keepdims=True)
-        # dense_wh_mask = np.concatenate([hm_a, hm_a], axis=0)
-        # ret.update({'dense_wh': dense_wh, 'dense_wh_mask': dense_wh_mask})
-        # del ret['wh']
 
-        # if not self.split == 'train':
-        #   gt_det = np.array(gt_det, dtype=np.float32) if len(gt_det) > 0 else \
-        #            np.zeros((1, 6), dtype=np.float32)
-        #   meta = {'c': c, 's': s, 'gt_det': gt_det, 'img_id': img_id}
-        #   ret['meta'] = meta
+        if not self.split == 'train':
+            gt_det = np.zeros((self.max_objs, 4), dtype=np.float32)
+            for k in range(num_objs):
+                ann = anns[k]
+                bbox = np.array(ann[:4].copy())
+                bbox = self._coco_box_to_bbox(bbox)
+                gt_det[k:4] = bbox
+
+            gt_det = np.array(gt_det, dtype=np.float32) if len(gt_det) > 0 else \
+                   np.zeros((1, 4), dtype=np.float32)
+            meta = {'gt_det': gt_det, 'h': height, 'w': width}
+            ret['meta'] = meta
         return ret
 
 from torch.utils.data import Dataset, DataLoader

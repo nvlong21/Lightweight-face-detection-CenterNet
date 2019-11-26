@@ -5,13 +5,10 @@ from torch.autograd import Variable
 import numpy as np
 import math
 try:
-    from .layer import BasicBlock, Bottleneck, RegressionTransform
-    from .anchors import Anchors
+
     from . import losses
     from .blocks import ShuffleV2Block
 except:
-    from layer import BasicBlock, Bottleneck, RegressionTransform
-    from anchors import Anchors
     import losses
     from blocks import ShuffleV2Block
 import torchsummary
@@ -328,19 +325,19 @@ class RetinaFace_MobileNet(nn.Module):
                     nn.BatchNorm2d(num_features=256, momentum=0.9),
                     nn.ReLU(inplace=True))
 
-        self.fpn = PyramidFeatures(64, 128, 256)
+        # self.fpn = PyramidFeatures(64, 128, 256)
 
-        self.context = Context(inchannels=128)       
+        # self.context = Context(inchannels=128)       
         
-        self.clsHead = ClassHead(inchannels = 256)
-        self.bboxHead = BboxHead(inchannels=  256)
-        self.ldmHead = LandmarkHead(inchannels = 256)
+        # self.clsHead = ClassHead(inchannels = 256)
+        # self.bboxHead = BboxHead(inchannels=  256)
+        # self.ldmHead = LandmarkHead(inchannels = 256)
 
-        self.anchors = Anchors()
+        # self.anchors = Anchors()
 
-        self.regressBoxes = RegressionTransform()
+        # self.regressBoxes = RegressionTransform()
         
-        self.losslayer = losses.LossLayer()
+        # self.losslayer = losses.LossLayer()
 
         self.freeze_bn()
     def freeze_bn(self):
@@ -382,25 +379,25 @@ class RetinaFace_MobileNet(nn.Module):
         x = self.mobilenet0_conv24(x)
         x = self.mobilenet0_conv25(x)
         x26 = self.mobilenet0_conv26(x)
-        features = self.fpn([x10, x22, x26])
-        context_features = [self.context(feature) for i,feature in enumerate(features)]
+        # features = self.fpn([x10, x22, x26])
+        # context_features = [self.context(feature) for i,feature in enumerate(features)]
 
-        bbox_regressions = torch.cat([self.bboxHead(feature) for i,feature in enumerate(context_features)], dim=1)
-        ldm_regressions = torch.cat([self.ldmHead(feature) for i,feature in enumerate(context_features)], dim=1)
-        classifications = torch.cat([self.clsHead(feature) for i,feature in enumerate(context_features)], dim=1)
+        # bbox_regressions = torch.cat([self.bboxHead(feature) for i,feature in enumerate(context_features)], dim=1)
+        # ldm_regressions = torch.cat([self.ldmHead(feature) for i,feature in enumerate(context_features)], dim=1)
+        # classifications = torch.cat([self.clsHead(feature) for i,feature in enumerate(context_features)], dim=1)
 
-        # bbox_regressions = torch.cat([self.bboxHead(feature) for feature in features], dim=1)
-        # ldm_regressions = torch.cat([self.ldmHead(feature) for feature in features], dim=1)
-        # classifications = torch.cat([self.clsHead(feature) for feature in features],dim=1)
+        # # bbox_regressions = torch.cat([self.bboxHead(feature) for feature in features], dim=1)
+        # # ldm_regressions = torch.cat([self.ldmHead(feature) for feature in features], dim=1)
+        # # classifications = torch.cat([self.clsHead(feature) for feature in features],dim=1)
 
-        anchors = self.anchors(img_batch)
+        # anchors = self.anchors(img_batch)
 
-        if self.training:
-            return self.losslayer(classifications, bbox_regressions,ldm_regressions, anchors, annotations)
-        else:
-            bboxes, landmarks = self.regressBoxes(anchors, bbox_regressions, ldm_regressions, img_batch)
+        # if self.training:
+        #     return self.losslayer(classifications, bbox_regressions,ldm_regressions, anchors, annotations)
+        # else:
+        #     bboxes, landmarks = self.regressBoxes(anchors, bbox_regressions, ldm_regressions, img_batch)
 
-            return classifications, bboxes, landmarks
+            # return classifications, bboxes, landmarks
 
 def load_retinaface_mbnet(path = ''):
     net = RetinaFace_MobileNet()
@@ -436,9 +433,9 @@ def load_retinaface_mbnet(path = ''):
     return net
 import time
 if __name__ == '__main__':
-    net = RetinaFace_MobileNet().cuda()
-    input = torch.FloatTensor(1, 3, 640, 640).uniform_(0, 1).cuda()
-    anno = torch.FloatTensor(1, 1, 5).uniform_(0, 1).cuda()
+    net = RetinaFace_MobileNet()#.cuda()
+    input = torch.FloatTensor(1, 3, 640, 640).uniform_(0, 1)#.cuda()
+    anno = torch.FloatTensor(1, 1, 5).uniform_(0, 1)#.cuda()
     for i in range(5):
         t = time.time()
         print(net([input, anno]))

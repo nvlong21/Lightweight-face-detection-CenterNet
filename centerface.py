@@ -5,6 +5,7 @@ from model.detnet25 import ShuffleNetV2
 import torch
 from collections import OrderedDict
 from torchvision import transforms as trans
+import time
 class CenterFace(object):
     def __init__(self, height, width, landmarks=True):
         self.landmarks = landmarks
@@ -13,15 +14,10 @@ class CenterFace(object):
             self.cuda = True
             if self.cuda:
                 self.net.cuda()
-            checkpoint = torch.load('out/model_epoch_100.pt')
-            new_state_dict = OrderedDict()
-            for k, v in checkpoint.items():
-                name = k[7:] # remove `module.`
-                new_state_dict[name] = v
-            self.net.load_state_dict(new_state_dict)
+            checkpoint = torch.load('out_1/model_epoch_180.pt')
+            self.net.load_state_dict(checkpoint)
             self.net.eval()
             del checkpoint
-            del new_state_dict
             self.transform_img = trans.Compose([
                 trans.ToTensor(),
                 trans.Normalize([0.40789654, 0.44719302, 0.47026115], [0.28863828, 0.27408164, 0.27809835])
@@ -29,6 +25,7 @@ class CenterFace(object):
         self.img_h_new, self.img_w_new, self.scale_h, self.scale_w = self.transform(height, width)
 
     def __call__(self, img, threshold=0.5):
+        
 
         img = self.transform_img(img)
         img = torch.unsqueeze(img, 0)
@@ -37,11 +34,13 @@ class CenterFace(object):
             img = img.cuda()
         out = self.net(img)[0]
         if self.landmarks:
-            heatmap, scale, offset, lms = out['hm'], out['wh'], out['reg'], out['lm']
+            heatmap, scale, offset, lms = out['hm'].detach().cpu().numpy(), out['wh'].detach().cpu().numpy(),\
+             out['reg'].detach().cpu().numpy(), out['lm'].detach().cpu().numpy()
         else:
             heatmap, scale, offset = out['hm'], out['wh'], out['reg']
 
         end = datetime.datetime.now()
+            
         print("cpu times = ", end - begin)
         if self.landmarks:
             dets, lms = self.decode(heatmap, scale, offset, lms, (self.img_h_new, self.img_w_new), threshold=threshold)
@@ -49,9 +48,9 @@ class CenterFace(object):
             dets = self.decode(heatmap, scale, offset, None, (self.img_h_new, self.img_w_new), threshold=threshold)
 
         if len(dets) > 0:
-            dets[:, 0:4:2], dets[:, 1:4:2] = dets[:, 0:4:2] / self.scale_w, dets[:, 1:4:2] / self.scale_h
+            dets[:, 0:4:2], dets[:, 1:4:2] = dets[:, 0:4:2] , dets[:, 1:4:2] #// self.scale_w, self.scale_h 
             if self.landmarks:
-                lms[:, 0:10:2], lms[:, 1:10:2] = lms[:, 0:10:2] / self.scale_w, lms[:, 1:10:2] / self.scale_h
+                lms[:, 0:10:2], lms[:, 1:10:2] = lms[:, 0:10:2] , lms[:, 1:10:2] #/ / self.scale_w , self.scale_h
         else:
             dets = np.empty(shape=[0, 5], dtype=np.float32)
             if self.landmarks:
@@ -77,16 +76,17 @@ class CenterFace(object):
             boxes = []
         if len(c0) > 0:
             for i in range(len(c0)):
-                s0, s1 = np.exp(scale0[c0[i], c1[i]]) * 4, np.exp(scale1[c0[i], c1[i]]) * 4
+                s0, s1 = scale0[c0[i], c1[i]]*4, scale1[c0[i], c1[i]]*4
+                # s0, s1 = np.exp(scale0[c0[i], c1[i]]) * 4, np.exp(scale1[c0[i], c1[i]]) * 4
                 o0, o1 = offset0[c0[i], c1[i]], offset1[c0[i], c1[i]]
                 s = heatmap[c0[i], c1[i]]
-                x1, y1 = max(0, (c1[i] + o1 + 0.5) * 4 - s1 / 2), max(0, (c0[i] + o0 + 0.5) * 4 - s0 / 2)
+                x1, y1 = max(0, (c1[i] + o1 + 0.5) * 4 - s0 / 2), max(0, (c0[i] + o0 + 0.5) * 4 - s1 / 2)
                 x1, y1 = min(x1, size[1]), min(y1, size[0])
-                boxes.append([x1, y1, min(x1 + s1, size[1]), min(y1 + s0, size[0]), s])
+                boxes.append([x1, y1, min(x1 + s0, size[1]), min(y1 + s1, size[0]), s])
                 if self.landmarks:
                     lm = []
                     for j in range(5):
-                        lm.append(landmark[0, j * 2 + 1, c0[i], c1[i]] * s1 + x1)
+                        lm.append(landmark[0, j * 2+1, c0[i], c1[i]] * s1 + x1)
                         lm.append(landmark[0, j * 2, c0[i], c1[i]] * s0 + y1)
                     lms.append(lm)
             boxes = np.asarray(boxes, dtype=np.float32)

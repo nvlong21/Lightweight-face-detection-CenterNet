@@ -38,106 +38,111 @@ def box_iou(boxes1, boxes2):
     """
     area1 = box_area(boxes1)
     area2 = box_area(boxes2)
-
-    lt = torch.max(boxes1[:, None, :2], boxes2[:, :2])  # [N,M,2]
-    rb = torch.min(boxes1[:, None, 2:], boxes2[:, 2:])  # [N,M,2]
-
+    lt = torch.max(boxes1[:, :2], boxes2[:, :2])  # [N,M,2]
+    rb = torch.min(boxes1[:, None,  2:], boxes2[:, 2:4])  # [N,M,2]
     wh = (rb - lt).clamp(min=0)  # [N,M,2]
     inter = wh[:, :, 0] * wh[:, :, 1]  # [N,M]
 
     iou = inter / (area1[:, None] + area2 - inter)
     return iou
 
+def transform(h, w):
+    img_h_new, img_w_new = int(np.ceil(h / 32) * 32), int(np.ceil(w / 32) * 32)
 
-    def transform(h, w):
-        img_h_new, img_w_new = int(np.ceil(h / 32) * 32), int(np.ceil(w / 32) * 32)
-        scale_h, scale_w = img_h_new / h, img_w_new / w
-        return img_h_new, img_w_new, scale_h, scale_w
-    def nms(boxes, scores, nms_thresh):
-        x1 = boxes[:, 0]
-        y1 = boxes[:, 1]
-        x2 = boxes[:, 2]
-        y2 = boxes[:, 3]
-        areas = (x2 - x1 + 1) * (y2 - y1 + 1)
-        order = np.argsort(scores)[::-1]
-        num_detections = boxes.shape[0]
-        suppressed = np.zeros((num_detections,), dtype=np.bool)
+    scale_h, scale_w = img_h_new/ h, img_w_new*1.0 / w
+    return img_h_new, img_w_new, scale_h, scale_w
+def nms(boxes, scores, nms_thresh):
+    x1 = boxes[:, 0]
+    y1 = boxes[:, 1]
+    x2 = boxes[:, 2]
+    y2 = boxes[:, 3]
+    areas = (x2 - x1 + 1) * (y2 - y1 + 1)
+    order = np.argsort(scores)[::-1]
+    num_detections = boxes.shape[0]
+    suppressed = np.zeros((num_detections,), dtype=np.bool)
 
-        keep = []
-        for _i in range(num_detections):
-            i = order[_i]
-            if suppressed[i]:
+    keep = []
+    for _i in range(num_detections):
+        i = order[_i]
+        if suppressed[i]:
+            continue
+        keep.append(i)
+
+        ix1 = x1[i]
+        iy1 = y1[i]
+        ix2 = x2[i]
+        iy2 = y2[i]
+        iarea = areas[i]
+
+        for _j in range(_i + 1, num_detections):
+            j = order[_j]
+            if suppressed[j]:
                 continue
-            keep.append(i)
 
-            ix1 = x1[i]
-            iy1 = y1[i]
-            ix2 = x2[i]
-            iy2 = y2[i]
-            iarea = areas[i]
+            xx1 = max(ix1, x1[j])
+            yy1 = max(iy1, y1[j])
+            xx2 = min(ix2, x2[j])
+            yy2 = min(iy2, y2[j])
+            w = max(0, xx2 - xx1 + 1)
+            h = max(0, yy2 - yy1 + 1)
 
-            for _j in range(_i + 1, num_detections):
-                j = order[_j]
-                if suppressed[j]:
-                    continue
+            inter = w * h
+            ovr = inter / (iarea + areas[j] - inter)
+            if ovr >= nms_thresh:
+                suppressed[j] = True
 
-                xx1 = max(ix1, x1[j])
-                yy1 = max(iy1, y1[j])
-                xx2 = min(ix2, x2[j])
-                yy2 = min(iy2, y2[j])
-                w = max(0, xx2 - xx1 + 1)
-                h = max(0, yy2 - yy1 + 1)
+    return keep
+def decode(heatmap, scale, offset, landmark, size, threshold=0.1):
+    heatmap = np.squeeze(heatmap)
+    scale =  np.expand_dims(scale,0)
+    offset =  np.expand_dims(offset,0)
+    landmark =  np.expand_dims(landmark,0)
+    scale0, scale1 = scale[0, 0, :, :], scale[0, 1, :, :]
+    offset0, offset1 = offset[0, 0, :, :], offset[0, 1, :, :]
+    c0, c1 = np.where(heatmap > threshold)
+    boxes, lms = [], []
+    if len(c0) > 0:
+        for i in range(len(c0)):
+            s0, s1 = scale0[c0[i], c1[i]] * 4, scale1[c0[i], c1[i]] * 4
+            o0, o1 = offset0[c0[i], c1[i]], offset1[c0[i], c1[i]]
+            s = heatmap[c0[i], c1[i]]
+            x1, y1 = max(0, (c1[i] + o1 + 0.5) * 4 - s0 / 2), max(0, (c0[i] + o0 + 0.5) * 4 - s1 / 2)
+            x1, y1 = min(x1, size[1]), min(y1, size[0])
+            boxes.append([x1, y1, min(x1 + s0, size[1]), min(y1 + s1, size[0]), s])
+            lm = []
+            for j in range(5):
+                lm.append(landmark[0, j * 2 + 1, c0[i], c1[i]] * s1 + x1)
+                lm.append(landmark[0, j * 2, c0[i], c1[i]] * s0 + y1)
+            lms.append(lm)
+        boxes = np.asarray(boxes, dtype=np.float32)
+        keep = nms(boxes[:, :4], boxes[:, 4], 0.3)
+        boxes = boxes[keep, :]
+        lms = np.asarray(lms, dtype=np.float32)
+        lms = lms[keep, :]
+    return boxes, lms
+from torchvision import transforms as trans
+def get_detections(data_batch, model,score_threshold=0.5, iou_threshold=0.5, cuda = True, threshold=0.5):
 
-                inter = w * h
-                ovr = inter / (iarea + areas[j] - inter)
-                if ovr >= nms_thresh:
-                    suppressed[j] = True
-
-        return keep
-    def decode(heatmap, scale, offset, landmark, size, threshold=0.1):
-        
-        heatmap = np.squeeze(heatmap)
-        scale0, scale1 = scale[0, 0, :, :], scale[0, 1, :, :]
-        offset0, offset1 = offset[0, 0, :, :], offset[0, 1, :, :]
-        c0, c1 = np.where(heatmap > threshold)
-    
-        boxes, lms = [], []
-        if len(c0) > 0:
-            for i in range(len(c0)):
-                s0, s1 = np.exp(scale0[c0[i], c1[i]]) * 4, np.exp(scale1[c0[i], c1[i]]) * 4
-                o0, o1 = offset0[c0[i], c1[i]], offset1[c0[i], c1[i]]
-                s = heatmap[c0[i], c1[i]]
-                x1, y1 = max(0, (c1[i] + o1 + 0.5) * 4 - s1 / 2), max(0, (c0[i] + o0 + 0.5) * 4 - s0 / 2)
-                x1, y1 = min(x1, size[1]), min(y1, size[0])
-                boxes.append([x1, y1, min(x1 + s1, size[1]), min(y1 + s0, size[0]), s])
-                lm = []
-                for j in range(5):
-                    lm.append(landmark[0, j * 2 + 1, c0[i], c1[i]] * s1 + x1)
-                    lm.append(landmark[0, j * 2, c0[i], c1[i]] * s0 + y1)
-                lms.append(lm)
-            boxes = np.asarray(boxes, dtype=np.float32)
-            keep = nms(boxes[:, :4], boxes[:, 4], 0.3)
-            boxes = boxes[keep, :]
-            lms = np.asarray(lms, dtype=np.float32)
-            lms = lms[keep, :]
-        return boxes, lms
-
-def get_detections(img_batch, model,score_threshold=0.5, iou_threshold=0.5, cuda = True, threshold=0.5):
     model.eval()
-    img_h_new, img_w_new, scale_h, scale_w = transform(height, width)
     with torch.no_grad():
-        imgs = self.transform_img(imgs)
-        imgs = torch.unsqueeze(imgs, 0)
+        # imgs = transform_img(imgs)
+        # imgs = torch.unsqueeze(imgs, 0)
         picked_boxes, picked_landmarks = [], []
+        img_batch = data_batch['input']
 
         if cuda:
-            img = img.cuda()
-        outputs = model(img)[0]
-        batch_size = out['hm'].shape[0]
+            img_batch = img_batch.cuda()
+        outputs = model(img_batch)[0]
+
+        batch_size = data_batch['input'].shape[0]
         for i in range(batch_size):
-            out = outputs[i]
-            heatmap, scale, offset, lms = out['hm'], out['wh'], out['reg'], out['lm']
-            end = datetime.datetime.now()
+            height, width = data_batch['meta']['h'][i], data_batch['meta']['w'][i]
+            img_h_new, img_w_new, scale_h, scale_w = transform(height.cpu().numpy(), width.cpu().numpy())
+
+            heatmap, scale, offset, lms = outputs['hm'][i].detach().cpu().numpy(), \
+                                            outputs['wh'][i].detach().cpu().numpy(), \
+                                            outputs['reg'][i].detach().cpu().numpy(), \
+                                            outputs['lm'][i].detach().cpu().numpy()
             dets, lms = decode(heatmap, scale, offset, lms, (img_h_new, img_w_new), threshold=threshold)
 
             if len(dets) > 0:
@@ -146,9 +151,8 @@ def get_detections(img_batch, model,score_threshold=0.5, iou_threshold=0.5, cuda
             else:
                 dets = np.empty(shape=[0, 5], dtype=np.float32)
                 lms = np.empty(shape=[0, 10], dtype=np.float32)
-        picked_boxes.append(keep_boxes)
-        picked_landmarks.append(keep_landmarks)
-        
+            picked_boxes.append(torch.FloatTensor(dets))
+            picked_landmarks.append(lms)
         return picked_boxes, picked_landmarks
 
 def compute_overlap(a,b):
@@ -175,10 +179,9 @@ def evaluate(val_data,model,threshold=0.5):
     precision = 0.
     #for i, data in tqdm(enumerate(val_data)):
     for data in tqdm(iter(val_data)):
-        img_batch = data['input'].cuda()
         annots = data['meta']['gt_det'].cuda()
 
-        picked_boxes,_ = get_detections(img_batch, model)
+        picked_boxes,_ = get_detections(data, model)
         recall_iter = 0.
         precision_iter = 0.
 
@@ -188,7 +191,7 @@ def evaluate(val_data,model,threshold=0.5):
 
             if boxes is None and annot_boxes.shape[0] == 0:
                 continue
-            elif boxes is None and annot_boxes.shape[0] != 0:
+            elif (boxes is None or len(boxes) < 1) and annot_boxes.shape[0] != 0:
                 recall_iter += 0.
                 precision_iter += 1.
                 continue
@@ -196,17 +199,17 @@ def evaluate(val_data,model,threshold=0.5):
                 recall_iter += 1.
                 precision_iter += 0.   
                 continue         
-            
-            overlap = box_iou(annot_boxes, boxes)
+            overlap = box_iou(annot_boxes, boxes.cuda())
+
                  
             # compute recall
-            max_overlap, _ = torch.max(overlap,dim=1)
+            max_overlap, _ = np.amax(overlap,axis=1)
             mask = max_overlap > threshold
             detected_num = mask.sum().item()
             recall_iter += detected_num/annot_boxes.shape[0]
 
             # compute precision
-            max_overlap, _ = torch.max(overlap,dim=0)
+            max_overlap, _ = np.amax(overlap,axis=0)
             mask = max_overlap > threshold
             true_positives = mask.sum().item()
             precision_iter += true_positives/boxes.shape[0]

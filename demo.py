@@ -27,9 +27,9 @@ def camera():
             break
     cap.release()
 
-
 def test_image():
-    frame = cv2.imread('d587b0a5-457a-4b66-b680-1eec6c4db48a.png')
+    frame = cv2.imread('imgs/17.jpg')
+    # frame = cv2.resize(frame, (640, 640))
     h, w = frame.shape[:2]
     landmarks = True
     centerface = CenterFace(h, w, landmarks=landmarks)
@@ -38,16 +38,19 @@ def test_image():
     else:
         dets = centerface(frame, threshold=0.35)
 
+    print(len(dets))
+
     for det in dets:
         boxes, score = det[:4], det[4]
         cv2.rectangle(frame, (int(boxes[0]), int(boxes[1])), (int(boxes[2]), int(boxes[3])), (2, 255, 0), 1)
-    if landmarks:
-        for lm in lms:
-            cv2.circle(frame, (int(lm[0]), int(lm[1])), 2, (0, 0, 255), -1)
-            cv2.circle(frame, (int(lm[2]), int(lm[3])), 2, (0, 0, 255), -1)
-            cv2.circle(frame, (int(lm[4]), int(lm[5])), 2, (0, 0, 255), -1)
-            cv2.circle(frame, (int(lm[6]), int(lm[7])), 2, (0, 0, 255), -1)
-            cv2.circle(frame, (int(lm[8]), int(lm[9])), 2, (0, 0, 255), -1)
+    # if landmarks:
+    #     for lm in lms:
+    #         cv2.circle(frame, (int(lm[0]), int(lm[1])), 2, (0, 0, 255), -1)
+    #         cv2.circle(frame, (int(lm[2]), int(lm[3])), 2, (0, 0, 255), -1)
+    #         cv2.circle(frame, (int(lm[4]), int(lm[5])), 2, (0, 0, 255), -1)
+    #         cv2.circle(frame, (int(lm[6]), int(lm[7])), 2, (0, 0, 255), -1)
+    #         cv2.circle(frame, (int(lm[8]), int(lm[9])), 2, (0, 0, 255), -1)
+    cv2.imwrite('centerface.jpg', frame)
     cv2.imshow('out', frame)
     cv2.waitKey(0)
 
