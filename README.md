@@ -38,3 +38,4 @@ CenterFace |--     |--       |--
 - [RFBNet](https://github.com/ruinmessi/RFBNet)
 - [Retinaface](https://github.com/deepinsight/insightface/blob/master/RetinaFace/README.md)
 - [CenterNet](https://github.com/xingyizhou/CenterNet)
+- [Ultra-Light-Fast-Generic-Face-Detector-1MB](https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB)
