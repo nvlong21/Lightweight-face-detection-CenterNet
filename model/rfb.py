@@ -11,20 +11,30 @@ class DUC(nn.Module):
     Initialize: inplanes, planes, upscale_factor
     OUTPUT: (planes // upscale_factor^2) * ht * wd
     '''
-    def __init__(self, inplanes, planes, upscale_factor=2):
+    def __init__(self, inplanes, planes, kernel_size = 3, upscale_factor=2):
         super(DUC, self).__init__()
         self.conv = nn.Conv2d(
-            inplanes, planes, kernel_size=3, padding=1, bias=False)
+            inplanes, planes, kernel_size=kernel_size, padding=1, bias=False)
         self.bn = nn.BatchNorm2d(planes, momentum=0.1)
-        self.swish = Swish()
+        self.relu = nn.ReLU(inplace=True)
         self.pixel_shuffle = nn.PixelShuffle(upscale_factor)
+        # fill_up_weights(self.pixel_shuffle)
 
     def forward(self, x):
         x = self.conv(x)
         x = self.bn(x)
-        x = self.swish(x)
+        x = self.relu(x)
         x = self.pixel_shuffle(x)
         return x
+def SeperableConv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0):
+    """Replace Conv2d with a depthwise Conv2d and Pointwise Conv2d.
+    """
+    return Sequential(
+        Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=kernel_size,
+               groups=in_channels, stride=stride, padding=padding),
+        ReLU(),
+        Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=1),
+    )
 class BasicConv(nn.Module):
 
     def __init__(self, in_planes, out_planes, kernel_size, stride=1, padding=0, dilation=1, groups=1, relu=True, bn=True):
@@ -96,6 +106,20 @@ def fill_fc_weights(layers):
         if isinstance(m, nn.Conv2d):
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0.0001)
+                nn.init.constant_(m.running_mean, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0.0001)
+                nn.init.constant_(m.running_mean, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
 
 
 def fill_up_weights(up):
@@ -108,67 +132,11 @@ def fill_up_weights(up):
                 (1 - math.fabs(i / f - c)) * (1 - math.fabs(j / f - c))
     for c in range(1, w.size(0)):
         w[c, 0, :, :] = w[0, 0, :, :]
-class RefinementStageBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.initial = conv(in_channels, out_channels, kernel_size=1, padding=0, bn=False)
-        self.trunk = nn.Sequential(
-            conv(out_channels, out_channels),
-            conv(out_channels, out_channels, dilation=2, padding=2)
-        )
-
-    def forward(self, x):
-        initial_features = self.initial(x)
-        trunk_features = self.trunk(initial_features)
-        return initial_features + trunk_features
 
 
-class UShapedContextBlock(nn.Module):
-    def __init__(self, in_channels, to_onnx=False):
-        super().__init__()
-        self.to_onnx = to_onnx
-        self.encoder1 = nn.Sequential(
-            conv(in_channels, in_channels*2, stride=2),
-            conv(in_channels*2, in_channels*2),
-        )
-        self.encoder2 = nn.Sequential(
-            conv(in_channels*2, in_channels*2, stride=2),
-            conv(in_channels*2, in_channels*2),
-        )
-        self.decoder2 = nn.Sequential(
-            conv(in_channels*2 + in_channels*2, in_channels*2),
-            conv(in_channels*2, in_channels*2),
-        )
-        self.decoder1 = nn.Sequential(
-            conv(in_channels*3, in_channels*2),
-            conv(in_channels*2, in_channels)
-        )
-
-    def forward(self, x):
-        e1 = self.encoder1(x)
-        e2 = self.encoder2(e1)
-
-        size_e1 = (e1.size()[2], e1.size()[3])
-        size_x = (x.size()[2], x.size()[3])
-        if self.to_onnx:  # Need interpolation to fixed size for conversion
-            size_e1 = (16, 16)
-            size_x = (32, 32)
-        d2 = self.decoder2(torch.cat([e1, F.interpolate(e2, size=size_e1,
-                                                        mode='bilinear', align_corners=False)], 1))
-        d1 = self.decoder1(torch.cat([x, F.interpolate(d2, size=size_x,
-                                                       mode='bilinear', align_corners=False)], 1))
-
-        return d1
-# def conv(in_channels, out_channels, kernel_size=3, padding=1, bn=True, dilation=1, stride=1, relu=True, bias=True):
-#     modules = [nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, bias=bias)]
-#     if bn:
-#         modules.append(nn.BatchNorm2d(out_channels))
-#     if relu:
-#         modules.append(nn.ReLU(inplace=True))
-#     return nn.Sequential(*modules)
 class Mb_Tiny_RFB(nn.Module):
 
-    def __init__(self, num_classes=2):
+    def __init__(self):
         super(Mb_Tiny_RFB, self).__init__()
         self.base_channel = 8 * 2
 
@@ -206,9 +174,10 @@ class Mb_Tiny_RFB(nn.Module):
             conv_dw(self.base_channel * 16, self.base_channel * 16, 1)
         )
         # self.conv_compress = nn.Conv2d(256, 512, kernel_size = 1, stride = 1, padding=0, bias=False)
-        self.duc1 = DUC(256, 512, upscale_factor=2)
-        self.duc2 = DUC(128, 256, upscale_factor=2)
-        self.duc3 = DUC(64, 128, upscale_factor=2)
+
+        self.duc = nn.Sequential(DUC(256, 512, kernel_size = 3, upscale_factor=2), 
+                                DUC(128, 256, kernel_size = 3, upscale_factor=2),
+                                DUC(64, 128, kernel_size = 3, upscale_factor=2))
         self.heads = {
                        'hm': 1,
                        'wh': 2, 
@@ -219,10 +188,10 @@ class Mb_Tiny_RFB(nn.Module):
         for head in self.heads:
             out_c = self.heads[head]
             fc = nn.Sequential(
-                  nn.Conv2d(32, 128,
-                    kernel_size=1, padding=0, bias=True),
+                 nn.Conv2d(32, 64, 3, 1, 1,  bias=False),
+                 nn.BatchNorm2d(64),
                   nn.ReLU(inplace=True),
-                  nn.Conv2d(128, out_c, 
+                  nn.Conv2d(64, out_c, 
                     kernel_size=1, stride=1, 
                     padding=0, bias=True))
             if 'hm' in head:
@@ -231,15 +200,10 @@ class Mb_Tiny_RFB(nn.Module):
                 fill_fc_weights(fc)
             self.__setattr__(head, fc)
 
-        # self.fc = nn.Linear(1024, num_classes)
-
     def forward(self, x):
         x = self.model(x)
-        # x = self.conv_compress(x)
-        x = self.duc1(x)
-        x = self.duc2(x)
-        x = self.duc3(x)
-
+        x = self.duc(x)
+        
         z = {}
         for head in self.heads:
             z[head] = self.__getattr__(head)(x)
@@ -247,8 +211,6 @@ class Mb_Tiny_RFB(nn.Module):
                 z[head] = F.sigmoid(z[head])
         return [z]
 
-        # x = x.view(-1, 1024)
-        # x = self.fc(x)
         return x
     def _initialize_weights(self):
         for name, m in self.named_modules():

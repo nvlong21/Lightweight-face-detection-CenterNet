@@ -338,7 +338,7 @@ def compute_rot_loss(output, target_bin, target_res, mask):
 
 
 def _sigmoid(x):
-  y = torch.clamp(x.sigmoid_(), min=1e-4, max=1-1e-4)
+  y = torch.clamp(x.sigmoid_(), min=1e-5, max=1-1e-5)
   return y
 
 class CtdetLoss(torch.nn.Module):
@@ -371,8 +371,8 @@ class CtdetLoss(torch.nn.Module):
 
       lm_loss += self.smoothl1(_tranpose_and_gather_feat(output['lm'], batch['ind']), batch['lm'])
 
-    loss = 1. * hm_loss + 0.1 * wh_loss + \
+    loss = 1. * hm_loss + 0.2 * wh_loss + \
            1. * off_loss + lm_loss
     loss_stats = {'loss': loss, 'hm_loss': hm_loss,
-                  'wh_loss': 0.1*wh_loss, 'off_loss': off_loss, 'lm_loss': lm_loss}
+                  'wh_loss': 0.2*wh_loss, 'off_loss': off_loss, 'lm_loss': lm_loss}
     return loss, loss_stats
