@@ -88,7 +88,6 @@ class MBConvBlock(nn.Module):
 
         hidden_dim = in_planes * expand_ratio
         reduced_dim = max(1, int(in_planes / reduction_ratio))
-
         layers = []
         # pw
         if in_planes != hidden_dim:
@@ -117,8 +116,10 @@ class MBConvBlock(nn.Module):
 
     def forward(self, x):
         if self.use_residual:
+            # print((x + self._drop_connect(self.conv(x))).size())
             return x + self._drop_connect(self.conv(x))
         else:
+            
             return self.conv(x)
 
 
@@ -149,13 +150,13 @@ class non_bottleneck_1d (nn.Module):
 
         self.bn1 = nn.BatchNorm2d(chann, eps=1e-03)
 
-        self.conv3x1_2 = nn.Conv2d(chann, chann, (3, 1), stride=1, padding=(1*dilated,0), bias=True, dilation = (dilated,1))
+        # self.conv3x1_2 = nn.Conv2d(chann, chann, (3, 1), stride=1, padding=(1*dilated,0), bias=True, dilation = (dilated,1))
 
-        self.conv1x3_2 = nn.Conv2d(chann, chann, (1,3), stride=1, padding=(0,1*dilated), bias=True, dilation = (1, dilated))
+        # self.conv1x3_2 = nn.Conv2d(chann, chann, (1,3), stride=1, padding=(0,1*dilated), bias=True, dilation = (1, dilated))
 
-        self.bn2 = nn.BatchNorm2d(chann, eps=1e-03)
+        # self.bn2 = nn.BatchNorm2d(chann, eps=1e-03)
 
-        self.dropout = nn.Dropout2d(dropprob)
+        # self.dropout = nn.Dropout2d(dropprob)
         
 
     def forward(self, input):
@@ -166,43 +167,84 @@ class non_bottleneck_1d (nn.Module):
         output = self.bn1(output)
         output = F.relu(output)
 
-        if (self.dropout.p != 0):
-            output = self.dropout(output)
+        # if (self.dropout.p != 0):
+        #     output = self.dropout(output)
         
         return F.relu(output+input)    #+input = identity (residual connection)
-class UpsamplerBlock (nn.Module):
-    def __init__(self, ninput, noutput, k_size = 2, stride= 2, padding=0, output_padding=0):
-        super().__init__()
-        self.conv = nn.ConvTranspose2d(ninput, noutput, k_size, stride=stride, padding=padding, output_padding=output_padding, bias=True)
-        self.bn = nn.BatchNorm2d(noutput, eps=1e-3)
+# class UpsamplerBlock (nn.Module):
+#     def __init__(self, ninput, noutput, k_size = 2, stride= 2, padding=0, output_padding=0):
+#         super().__init__()
+#         self.conv = nn.ConvTranspose2d(ninput, noutput, k_size, stride=stride, padding=padding, output_padding=output_padding, bias=True)
+#         self.bn = nn.BatchNorm2d(noutput, eps=1e-3)
 
-    def forward(self, input):
-        output = self.conv(input)
-        output = self.bn(output)
-        return F.relu(output)
-class Decoder (nn.Module):
-    def __init__(self,  ninput):
-        super().__init__()
+#     def forward(self, input):
+#         output = self.conv(input)
+#         output = self.bn(output)
+#         return F.relu(output)
+class IDAUp(nn.Module):
+    def __init__(self, out_dim, channel):
+        super(IDAUp, self).__init__()
+        self.out_dim = out_dim
+        self.up = nn.Sequential(
+                    nn.ConvTranspose2d(
+                        out_dim, out_dim, kernel_size=2, stride=2, padding=0,
+                        output_padding=0, groups=out_dim, bias=False),
+                    nn.BatchNorm2d(out_dim,eps=0.001,momentum=0.1),
+                    nn.ReLU())
+        self.conv =  nn.Sequential(
+                    nn.Conv2d(channel, out_dim,
+                              kernel_size=1, stride=1, bias=False),
+                    nn.BatchNorm2d(out_dim,eps=0.001,momentum=0.1),
+                    nn.ReLU(inplace=True))
 
-        self.layers = nn.ModuleList()
-        self.layers.append(UpsamplerBlock(ninput, ninput//2))
-        self.layers.append(non_bottleneck_1d(ninput//2, 0, 1))
-        self.layers.append(non_bottleneck_1d(ninput//2, 0, 1))
+    def forward(self, layers):
 
-        self.layers.append(UpsamplerBlock(ninput//2, ninput//4))
-        self.layers.append(non_bottleneck_1d(ninput//4, 0, 1))
-        self.layers.append(non_bottleneck_1d(ninput//4, 0, 1))
+        layers = list(layers)
+        x = self.up(layers[0])
+        y = self.conv(layers[1])
+        print(x.size())
+        out = x + y
+        return out
+class UpsamplerBlock(nn.Module):
+    def __init__(self, channels, out_dim = 24):
+        super(UpsamplerBlock, self).__init__()
+        channels =  channels[::-1]
+        self.conv =  nn.Sequential(
+                    nn.Conv2d(channels[0], out_dim,
+                              kernel_size=1, stride=1, bias=False),
+                    nn.BatchNorm2d(out_dim,eps=0.001,momentum=0.1),
+                    nn.ReLU(inplace=True))
+        self.conv_last =  nn.Sequential(
+                    nn.Conv2d(out_dim, out_dim,
+                              kernel_size=3, stride=1, padding=1 ,bias=False),
+                    nn.BatchNorm2d(out_dim,eps=1e-5,momentum=0.01),
+                    nn.ReLU(inplace=True))
 
-        self.output_conv = nn.ConvTranspose2d(ninput//4, ninput//4, 2, stride=2, padding=0, output_padding=0, bias=True)
+        for i,channel in enumerate(channels[1:]):
+            setattr(self,'up_%d'%(i), IDAUp(out_dim,channel))
 
-    def forward(self, input):
-        output = input
-        for layer in self.layers:
-            output = layer(output)
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m,nn.ConvTranspose2d):
+                fill_up_weights(m)
 
-        output = self.output_conv(output)
+    def forward(self, layers):
+        layers = list(layers)
+        assert len(layers) > 1
+        x = self.conv(layers[-1])
+        for i in range(0,len(layers)-1):
 
-        return output
+            up = getattr(self, 'up_{}'.format(i))
+            print(layers[len(layers)-2-i].size())
+            x = up([x, layers[len(layers)-2-i]])
+        x = self.conv_last(x)
+        return x
 def fill_fc_weights(layers):
     for m in layers.modules():
         if isinstance(m, nn.Conv2d):
@@ -246,19 +288,25 @@ class EfficientNet(nn.Module):
         # yapf: enable
 
         out_channels = _round_filters(32, width_mult)
-        features = [ConvBNReLU(3, out_channels, 3, stride=2)]
+        self.first_conv = nn.Sequential(ConvBNReLU(3, out_channels, 3, stride=2)) 
         in_channels = out_channels
-        for t, c, n, s, k in settings:
-            se = False
+        for idx, (t, c, n, s, k) in enumerate(settings):
+            layer = []
             out_channels = _round_filters(c, width_mult)
             repeats = _round_repeats(n, depth_mult)
             for i in range(repeats):
                 stride = s if i == 0 else 1
-                features += [MBConvBlock(in_channels, out_channels, expand_ratio=t, stride=stride, kernel_size=k, se= se)]
+                layer += [MBConvBlock(in_channels, out_channels, expand_ratio=t, stride=stride, kernel_size=k, se= False)]
                 in_channels = out_channels
-        self.conv_last = conv_1x1_bn(320, 128)
-        self.features = nn.Sequential(*features)
-        self.decode = Decoder(128)
+            fc = nn.Sequential(*layer)
+            self.__setattr__('layer%s'%idx, fc)
+        self.dla_up = UpsamplerBlock([24, 32, 96, 320])
+        # self.conv_last = conv_1x1_bn(320, 24)
+        # self.conv_first = conv_1x1_bn(32, 24)
+        # self.conv_second = conv_1x1_bn(96, 24)
+        # self.decode = Decoder(24)
+        # self.decode1 = Decoder(24)
+        # self.decode2 = Decoder(24)
         self.heads = {
                        'hm': 1,
                        'wh': 2, 
@@ -269,14 +317,14 @@ class EfficientNet(nn.Module):
         for head in self.heads:
             out_c = self.heads[head]
             fc = nn.Sequential(
-                  nn.Conv2d(32, 64,
-                    kernel_size=1, padding=0, bias=True),
+                  nn.Conv2d(24, 24,
+                    kernel_size=3, padding=1, bias=True),
                   nn.ReLU(inplace=True),
-                  nn.Conv2d(64, out_c, 
+                  nn.Conv2d(24, out_c, 
                     kernel_size=1, stride=1, 
                     padding=0, bias=True))
             if 'hm' in head:
-                fc[-1].bias.data.fill_(-2.19)
+                fc[-1].bias.data.fill_(-1.19)
             else:
                 fill_fc_weights(fc)
             self.__setattr__(head, fc)
@@ -298,9 +346,22 @@ class EfficientNet(nn.Module):
                     nn.init.zeros_(m.bias)
 
     def forward(self, x):
-        x = self.features(x)
-        x  = self.conv_last(x)
-        x = self.decode(x)
+        layers = []
+        x = self.first_conv(x)
+        x0 = self.layer0(x)
+        layers.append(x0)
+        x =  self.layer1(x0)
+        x1 = self.layer2(x)
+        layers.append(x1)
+        x = self.layer3(x1)
+        x4 = self.layer4(x)
+        layers.append(x4)
+        x = self.layer5(x4)
+        x6 = self.layer6(x)
+        layers.append(x6)
+        x = self.dla_up(layers)
+        print(x.size())
+
         z = {}
         for head in self.heads:
             z[head] = self.__getattr__(head)(x)
@@ -327,40 +388,6 @@ def _efficientnet(arch, pretrained, progress, **kwargs):
 def efficientnet_b0(pretrained=False, progress=True, **kwargs):
     return _efficientnet('efficientnet_b0', pretrained, progress, **kwargs)
 
-
-# @mlconfig.register
-# def efficientnet_b1(pretrained=False, progress=True, **kwargs):
-#     return _efficientnet('efficientnet_b1', pretrained, progress, **kwargs)
-
-
-# @mlconfig.register
-# def efficientnet_b2(pretrained=False, progress=True, **kwargs):
-#     return _efficientnet('efficientnet_b2', pretrained, progress, **kwargs)
-
-
-# @mlconfig.register
-# def efficientnet_b3(pretrained=False, progress=True, **kwargs):
-#     return _efficientnet('efficientnet_b3', pretrained, progress, **kwargs)
-
-
-# @mlconfig.register
-# def efficientnet_b4(pretrained=False, progress=True, **kwargs):
-#     return _efficientnet('efficientnet_b4', pretrained, progress, **kwargs)
-
-
-# @mlconfig.register
-# def efficientnet_b5(pretrained=False, progress=True, **kwargs):
-#     return _efficientnet('efficientnet_b5', pretrained, progress, **kwargs)
-
-
-# @mlconfig.register
-# def efficientnet_b6(pretrained=False, progress=True, **kwargs):
-#     return _efficientnet('efficientnet_b6', pretrained, progress, **kwargs)
-
-
-# @mlconfig.register
-# def efficientnet_b7(pretrained=False, progress=True, **kwargs):
-#     return _efficientnet('efficientnet_b7', pretrained, progress, **kwargs)
 import time
 from torchsummary import summary
 if __name__ == "__main__":
@@ -369,7 +396,7 @@ if __name__ == "__main__":
     # model = EfficientNet().cuda()
     model.eval()
     test_data = torch.rand(1, 3, 640, 640).cuda()
-    summary(model, (3,640, 640))
+    # summary(model, (3,640, 640))
     for i in range(5):
         t = time.time()
         test_outputs = model(test_data) #, test_data_2]

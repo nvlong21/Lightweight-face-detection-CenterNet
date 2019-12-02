@@ -243,22 +243,13 @@ class Decoder (nn.Module):
         super().__init__()
 
         self.layers = nn.ModuleList()
-        self.layers.append(UpsamplerBlock(ninput, ninput//2))
-        self.layers.append(nn.Conv2d(ninput//2, ninput//2, 1, stride=1))
-        self.layers.append(nn.BatchNorm2d(ninput//2))
-
-        self.layers.append(UpsamplerBlock(ninput//2, ninput//4))
-        self.layers.append(nn.Conv2d(ninput//4, ninput//4, 1, stride=1))
-        self.layers.append(nn.BatchNorm2d(ninput//4))
-
-        self.output_conv = nn.ConvTranspose2d(ninput//4, ninput//4, 1, stride=2, padding=0, output_padding=1, bias=True)
-
+        self.layers.append(UpsamplerBlock(ninput, ninput))
     def forward(self, input):
         output = input
         for layer in self.layers:
             output = layer(output)
 
-        output = self.output_conv(output)
+        # output = self.output_conv(output)
 
         return output
 class ShuffleNetV2(nn.Module):
@@ -320,11 +311,13 @@ class ShuffleNetV2(nn.Module):
 
         self.shuff_14 = ShuffleV2Block(inp, outp, mid_channels=outp // 2, ksize=3, stride=stride)
         self.shuff_15 = ShuffleV2Block(inp, outp, mid_channels=outp // 2, ksize=3, stride=stride)
-
         self.shuff_16 = ShuffleV2Block(inp, outp, mid_channels=outp // 2, ksize=3, stride=stride)
-        self.conv_last  = conv_1x1_bn(input_channel, 128)
-        # self.decode = Decoder(256)
-        self.decode = nn.Sequential(GCN(128, 256))#, GCN(128, 256), GCN(64,128)
+        self.conv_last  = conv_1x1_bn(input_channel, 64)
+        self.conv_first  = conv_1x1_bn(116, 64)
+        self.conv_second  = conv_1x1_bn(232, 64)
+        self.decode = Decoder(64)
+        self.decode1 = Decoder(64)
+        self.decode2 = Decoder(64)
         self.heads = {
                        'hm': 1,
                        'wh': 2, 
@@ -335,10 +328,10 @@ class ShuffleNetV2(nn.Module):
         for head in self.heads:
             out_c = self.heads[head]
             fc = nn.Sequential(
-                  nn.Conv2d(32, 64,
+                  nn.Conv2d(64, 128,
                     kernel_size=3, padding=1, bias=True),
                   nn.ReLU(inplace=True),
-                  nn.Conv2d(64, out_c, 
+                  nn.Conv2d(128, out_c, 
                     kernel_size=1, stride=1, 
                     padding=0, bias=True))
             if 'hm' in head:
@@ -354,13 +347,13 @@ class ShuffleNetV2(nn.Module):
         x = self.shuff_1(x)
         x = self.shuff_2(x)
         x = self.shuff_3(x)
-        x = self.shuff_4(x)
-        x = self.shuff_5(x)
+        x4 = self.shuff_4(x)
+        x = self.shuff_5(x4)
         x = self.shuff_6(x)
         x = self.shuff_7(x)
         x = self.shuff_8(x)
-        x = self.shuff_9(x)
-        x = self.shuff_10(x)
+        x9 = self.shuff_9(x)
+        x = self.shuff_10(x9)
         x = self.shuff_11(x)
         x = self.shuff_12(x)
         x = self.shuff_13(x)
@@ -368,17 +361,13 @@ class ShuffleNetV2(nn.Module):
         x = self.shuff_15(x)
         x= self.shuff_16(x)
         x = self.conv_last(x)
-        
-        # print("aaa:", time.time() -t)
-        print(x.size())
-        
         x = self.decode(x)
-        print(x.size())
-
-        # x = self.duc1(x)
-        
-        # x = self.duc2(x)
-        # x = self.duc3(x)
+        x9= self.conv_second(x9)
+        x = x9 + x
+        x = self.decode1(x)
+        x4 = self.conv_first(x4)
+        x = x4 + x
+        x = self.decode2(x)
         z = {}
         for head in self.heads:
             z[head] = self.__getattr__(head)(x)
