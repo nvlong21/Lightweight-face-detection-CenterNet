@@ -139,30 +139,46 @@ class CenterFaceData(data.Dataset):
         for k in range(num_objs):
             ann = anns[k]
             bbox = np.array(ann[:4].copy())
-            x_o, y_o, w_o, h_o = ann[0], ann[1], ann[2], ann[3]
-
-            bbox = self._coco_box_to_bbox(bbox)
-            lm = []
+            lm = np.zeros( 10, dtype=np.float32)
             for i in range(5):
                 if  self.split =='train' and ann[4]>0:
-                    x = (ann[4 + 3 * i] - x_o)/ (w_o + 1e-14)
-                    y = (ann[4 + 3 * i + 1] - y_o)/(h_o + 1e-14)
-                    _lm = [x, y]
+                    x = ann[4 + 3 * i]
+                    y = ann[4 + 3 * i + 1]
+                    lm[i*2] = x
+                    lm[i*2+1] = y
                 else:
-                    _lm = [0, 0]
-                lm.append(_lm)
-            lm = np.array(lm).reshape(1, -1)[0]
+                    lm[i*2] = -1
+                    lm[i*2+1] = -1
+            bbox = self._coco_box_to_bbox(bbox)
             if flipped:
                 bbox[[0, 2]] = width - bbox[[2, 0]] - 1
-
+                if lm[0] >=0:  
+                    lm[0::2] = width - lm[0::2]
+                    l_tmp = lm.copy()
+                    lm[0:2] = l_tmp[2:4]
+                    lm[2:4] = l_tmp[0:2]
+                    lm[6:8] = l_tmp[8:10]
+                    lm[8:10] = l_tmp[6:8]
             bbox[:2] = affine_transform(bbox[:2], trans_output)
             bbox[2:] = affine_transform(bbox[2:], trans_output)
+            if lm[0] >=0:
+                lm[:2] = affine_transform(lm[:2], trans_output)
+                lm[2:4] = affine_transform(lm[2:4], trans_output)
+                lm[4:6] = affine_transform(lm[4:6], trans_output)
+                lm[6:8] = affine_transform(lm[6:8], trans_output)
+                lm[8:10] = affine_transform(lm[8:10], trans_output)
+            
             bbox[[0, 2]] = np.clip(bbox[[0, 2]], 0, output_w - 1)
             bbox[[1, 3]] = np.clip(bbox[[1, 3]], 0, output_h - 1)
-            
             h, w = bbox[3] - bbox[1], bbox[2] - bbox[0]
+
+            lm[0::2] -= bbox[0]
+            lm[1::2] -= bbox[1]
+            lm[[0, 2, 4, 6, 8]] = np.clip(lm[[0, 2, 4, 6, 8]], 1e-13, w)
+            lm[[1, 3, 5, 7, 9]] = np.clip(lm[[1, 3, 5, 7, 9]], 1e-13, h)
             if h > 0 and w > 0:
-                
+                lm[0::2]/= w
+                lm[1::2]/= h
                 radius = gaussian_radius((math.ceil(h), math.ceil(w)))
                 radius = max(0, int(radius))
                 ct = np.array(
@@ -174,10 +190,8 @@ class CenterFaceData(data.Dataset):
                 ind[k] = ct_int[1] * output_w + ct_int[0]
                 reg[k] = ct - ct_int
                 reg_mask[k] = 1
-
-                
                 landmarks[k] = lm
-
+        # print(landmarks)
         ret = {'input': inp, 'hm': hm, 'lm':landmarks,'reg_mask': reg_mask, 'ind': ind, 'wh': wh, 'reg': reg}
 
         if not self.split == 'train':

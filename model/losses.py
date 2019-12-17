@@ -354,7 +354,7 @@ class CtdetLoss(torch.nn.Module):
       self.device = device
     else:
       self.device = None
-    self.smoothl1 = nn.SmoothL1Loss()
+    self.reg = RegLoss()
   def forward(self, outputs, batch):
     hm_loss, wh_loss, off_loss, lm_loss = 0, 0, 0, 0
     for s in range(1):
@@ -369,10 +369,10 @@ class CtdetLoss(torch.nn.Module):
       off_loss += self.crit_reg(output['reg'], batch['reg_mask'],
                            batch['ind'], batch['reg'])
 
-      lm_loss += self.smoothl1(_tranpose_and_gather_feat(output['lm'], batch['ind']), batch['lm'])
+      lm_loss += self.reg(output['lm'], batch['reg_mask'], batch['ind'], batch['lm'])
 
-    loss = 1. * hm_loss + 0.2 * wh_loss + \
+    loss = 1. * hm_loss + 0.1 * wh_loss + \
            1. * off_loss + lm_loss
     loss_stats = {'loss': loss, 'hm_loss': hm_loss,
-                  'wh_loss': 0.2*wh_loss, 'off_loss': off_loss, 'lm_loss': lm_loss}
+                  'wh_loss': 0.1*wh_loss, 'off_loss': off_loss, 'lm_loss': lm_loss}
     return loss, loss_stats

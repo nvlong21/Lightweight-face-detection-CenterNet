@@ -10,73 +10,6 @@ except:
     from blocks import ShuffleV2Block
 import torchsummary
 from collections import OrderedDict
-# import dsntnn
-BN_MOMENTUM = 0.1
-class GCN(nn.Module):
-    def __init__(self, inplanes, planes, ks=3):
-        super(GCN, self).__init__()
-        self.conv_l1 = nn.Conv2d(inplanes, planes, kernel_size=(ks, 1),
-                                 padding=(ks//2, 0))
-
-        self.conv_l2 = nn.Conv2d(planes, planes, kernel_size=(1, ks),
-                                 padding=(0, ks//2))
-        self.conv_r1 = nn.Conv2d(inplanes, planes, kernel_size=(1, ks),
-                                 padding=(0, ks//2))
-        self.conv_r2 = nn.Conv2d(planes, planes, kernel_size=(ks, 1),
-                                 padding=(ks//2, 0))
-
-    def forward(self, x):
-        x_l = self.conv_l1(x)
-        x_l = self.conv_l2(x_l)
-
-        x_r = self.conv_r1(x)
-        x_r = self.conv_r2(x_r)
-
-        x = x_l + x_r
-
-        return x
-class DUC(nn.Module):
-    '''
-    Initialize: inplanes, planes, upscale_factor
-    OUTPUT: (planes // upscale_factor^2) * ht * wd
-    '''
-    def __init__(self, inplanes, planes, upscale_factor=2, kernel_size = 3):
-        super(DUC, self).__init__()
-        self.conv = nn.Conv2d(
-            inplanes, planes, kernel_size=kernel_size, padding=1, bias=False)
-        self.bn = nn.BatchNorm2d(planes, momentum=0.1)
-        self.relu = nn.ReLU(inplace=True)
-        self.pixel_shuffle = nn.PixelShuffle(upscale_factor)
-
-    def forward(self, x):
-        x = self.conv(x)
-        x = self.bn(x)
-        x = self.relu(x)
-        x = self.pixel_shuffle(x)
-        return x
-
-class Concat(nn.Module):
-    def forward(self,*feature):
-        out = torch.cat(feature,dim=1)
-        return out
-
-
-def initialize_layer(layer):
-    if isinstance(layer, nn.Conv2d):
-        nn.init.normal_(layer.weight, std=0.01)
-        if layer.bias is not None:
-            nn.init.constant_(layer.bias, val=0)
-
-        for layer in self.context:
-            for m in layer.modules():
-                if isinstance(m, nn.Conv2d):
-                    nn.init.normal_(m.weight, std=0.01)
-                    if m.bias is not None:
-                        nn.init.constant_(m.bias, 0)
-                if isinstance(m, nn.BatchNorm2d):
-                    nn.init.constant_(m.weight, 1)
-                    nn.init.constant_(m.bias, 0)
-
 
 def fill_fc_weights(layers):
     for m in layers.modules():
@@ -112,85 +45,6 @@ def conv_1x1_bn(inp, oup):
         nn.BatchNorm2d(oup),
         nn.ReLU(inplace=True)
     )
-
-class IBN(nn.Module):
-    def __init__(self, planes):
-        super(IBN, self).__init__()
-        half1 = int(planes//2)
-        self.half = half1
-        half2 = planes - half1
-        self.IN = nn.InstanceNorm2d(half1, affine=True)
-        self.BN = nn.BatchNorm2d(half2)
-    
-    def forward(self, x):
-        split = torch.split(x, self.half, 1)
-        out1 = self.IN(split[0].contiguous())
-        out2 = self.BN(split[1].contiguous())
-        out = torch.cat((out1, out2), 1)
-        return out
-
-class ASPPInPlaceABNBlock(nn.Module):
-    def __init__(self, in_chs, out_chs, feat_res=(56, 112),
-                 up_ratio=2, aspp_sec=(12, 24, 36)):
-        super(ASPPInPlaceABNBlock, self).__init__()
-
-        self.in_norm = IBN(in_chs)
-        self.gave_pool = nn.Sequential(OrderedDict([("conv1_0", nn.Conv2d(in_chs, out_chs,
-                                                                          kernel_size=1, stride=1, padding=0,
-                                                                          groups=1, bias=False, dilation=1)),
-                                                    ("up0", nn.Upsample(scale_factor = 2, mode='nearest'))]))
-
-
-        self.aspp_bra = nn.Sequential(OrderedDict([("conv2_3", nn.Conv2d(in_chs, out_chs, kernel_size=3,
-                                                                          stride=1, padding=1, bias=False,
-                                                                          groups=1))]))
-        self.aspp_bra1 = nn.Sequential(OrderedDict([("conv2_4", nn.Conv2d(in_chs, out_chs, kernel_size=3,
-                                                                          stride=1, padding=1, bias=False,
-                                                                          groups=1))]))
-
-        self.aspp_catdown = nn.Sequential(OrderedDict([("norm_act", IBN(2*out_chs)),
-                                                       ("conv_down", nn.Conv2d(2*out_chs, out_chs, kernel_size=1,
-                                                                               stride=1, padding=1, bias=False,
-                                                                               groups=1, dilation=1)),
-                                                       ("dropout", nn.Dropout2d(p=0.2, inplace=True))]))
-
-        self.upsampling = nn.Upsample(size=(int(feat_res[0]*up_ratio), int(feat_res[1]*up_ratio)), mode='bilinear')
-
-    # +++++++++++++++++++++++++++++++++++++++++++++++++++ #
-    # channel_shuffle: shuffle channels in groups
-    # +++++++++++++++++++++++++++++++++++++++++++++++++++ #
-    @staticmethod
-    def _channel_shuffle(x, groups):
-        """
-        Channel shuffle operation
-        :param x: input tensor
-        :param groups: split channels into groups
-        :return: channel shuffled tensor
-        """
-        batch_size, num_channels, height, width = x.data.size()
-
-        channels_per_group = num_channels // groups
-
-        # reshape
-        x = x.view(batch_size, groups, channels_per_group, height, width)
-
-        # transpose
-        # - contiguous() required if transpose() is used before view().
-        #   See https://github.com/pytorch/pytorch/issues/764
-        x = torch.transpose(x, 1, 2).contiguous().view(batch_size, -1, height, width)
-
-        return x
-
-    def forward(self, x):
-        x = self.in_norm(x)
-        x1= self.gave_pool(x)
-        x2 = self.aspp_bra(x)
-        x3 = self.aspp_bra1(x)
-        x = torch.cat([x2, x3], dim=1)
-        return x
-
-        # out = self.aspp_catdown(x)
-        # return out, self.upsampling(out)
 class non_bottleneck_1d (nn.Module):
     def __init__(self, chann, dropprob, dilated):        
         super().__init__()
@@ -227,46 +81,42 @@ class non_bottleneck_1d (nn.Module):
             output = self.dropout(output)
         
         return F.relu(output+input)    #+input = identity (residual connection)
-class UpsamplerBlock (nn.Module):
-    def __init__(self, ninput, noutput, k_size = 3, stride=2, padding=1, output_padding=1):
-        super().__init__()
-        self.conv = nn.ConvTranspose2d(ninput, noutput, k_size, stride=stride, padding=padding, output_padding=output_padding, bias=True)
-        self.bn = nn.BatchNorm2d(noutput, eps=1e-3)
+class IDAUp(nn.Module):
+    def __init__(self, out_dim, channel):
+        super(IDAUp, self).__init__()
+        self.out_dim = out_dim
+        self.up = nn.Sequential(
+                    nn.ConvTranspose2d(
+                        out_dim, out_dim, kernel_size=2, stride=2, padding=0,
+                        output_padding=0, groups=out_dim, bias=False),
+                    nn.BatchNorm2d(out_dim,eps=0.001,momentum=0.1),
+                    nn.ReLU())
+        self.conv =  nn.Sequential(
+                    nn.Conv2d(channel, out_dim,
+                              kernel_size=1, stride=1, bias=False),
+                    nn.BatchNorm2d(out_dim,eps=0.001,momentum=0.1),
+                    nn.ReLU(inplace=True))
 
-    def forward(self, input):
-        output = self.conv(input)
-        output = self.bn(output)
-        return F.relu(output)
-
-class Decoder (nn.Module):
-    def __init__(self,  ninput):
-        super().__init__()
-
-        self.layers = nn.ModuleList()
-        self.layers.append(UpsamplerBlock(ninput, ninput))
-    def forward(self, input):
-        output = input
-        for layer in self.layers:
-            output = layer(output)
-
-        # output = self.output_conv(output)
-
-        return output
+    def forward(self, inpu1, input2):
+        x = self.up(inpu1)
+        y = self.conv(input2)
+        out = x + y
+        return out
 class ShuffleNetV2(nn.Module):
-    def __init__(self, input_size=224, model_size='1.0x'):
+    def __init__(self, input_size=224, model_size='0.5x'):
         super(ShuffleNetV2, self).__init__()
         print('model size is ', model_size)
 
         self.stage_repeats = [4, 8, 4]
         self.model_size = model_size
         if model_size == '0.5x':
-            self.stage_out_channels = [-1, 24, 48, 96, 192]
+            self.stage_out_channels = [-1, 24, 48, 96, 192,1024]
         elif model_size == '1.0x':
-            self.stage_out_channels = [-1, 24, 116, 232, 464]
+            self.stage_out_channels = [-1, 24, 116, 232, 464, 1024]
         elif model_size == '1.5x':
-            self.stage_out_channels = [-1, 24, 176, 352, 704]
+            self.stage_out_channels = [-1, 24, 176, 352, 704, 1024]
         elif model_size == '2.0x':
-            self.stage_out_channels = [-1, 24, 244, 488, 976]
+            self.stage_out_channels = [-1, 24, 244, 488, 976, 1024]
         else:
             raise NotImplementedError
 
@@ -287,7 +137,6 @@ class ShuffleNetV2(nn.Module):
         self.shuff_2 = ShuffleV2Block(inp, outp, mid_channels=outp // 2, ksize=3, stride=stride)
         self.shuff_3 = ShuffleV2Block(inp, outp, mid_channels=outp // 2, ksize=3, stride=stride)
         self.shuff_4 = ShuffleV2Block(inp, outp, mid_channels=outp // 2, ksize=3, stride=stride)
-
         output_channel = self.stage_out_channels[3]
         inp, outp, stride = input_channel, output_channel, 2
         self.shuff_5 = ShuffleV2Block(inp, outp, mid_channels=outp // 2, ksize=3, stride=stride)
@@ -295,10 +144,8 @@ class ShuffleNetV2(nn.Module):
         inp, outp, stride = input_channel // 2, output_channel, 1
         self.shuff_6 = ShuffleV2Block(inp, outp, mid_channels=outp // 2, ksize=3, stride=stride)
         self.shuff_7= ShuffleV2Block(inp, outp, mid_channels=outp // 2, ksize=3, stride=stride)
-
         self.shuff_8 = ShuffleV2Block(inp, outp, mid_channels=outp // 2, ksize=3, stride=stride)
         self.shuff_9 = ShuffleV2Block(inp, outp, mid_channels=outp // 2, ksize=3, stride=stride)
-
         self.shuff_10 = ShuffleV2Block(inp, outp, mid_channels=outp // 2, ksize=3, stride=stride)
         self.shuff_11 = ShuffleV2Block(inp, outp, mid_channels=outp // 2, ksize=3, stride=stride)
         self.shuff_12 = ShuffleV2Block(inp, outp, mid_channels=outp // 2, ksize=3, stride=stride)
@@ -312,12 +159,11 @@ class ShuffleNetV2(nn.Module):
         self.shuff_14 = ShuffleV2Block(inp, outp, mid_channels=outp // 2, ksize=3, stride=stride)
         self.shuff_15 = ShuffleV2Block(inp, outp, mid_channels=outp // 2, ksize=3, stride=stride)
         self.shuff_16 = ShuffleV2Block(inp, outp, mid_channels=outp // 2, ksize=3, stride=stride)
-        self.conv_last  = conv_1x1_bn(input_channel, 64)
-        self.conv_first  = conv_1x1_bn(116, 64)
-        self.conv_second  = conv_1x1_bn(232, 64)
-        self.decode = Decoder(64)
-        self.decode1 = Decoder(64)
-        self.decode2 = Decoder(64)
+        self.conv_last  = conv_1x1_bn(input_channel, 24)
+        self.up1 = IDAUp(24, 96)
+        self.up2 = IDAUp(24, 48)
+        self.up3 = IDAUp(24, 24)
+
         self.heads = {
                        'hm': 1,
                        'wh': 2, 
@@ -328,10 +174,10 @@ class ShuffleNetV2(nn.Module):
         for head in self.heads:
             out_c = self.heads[head]
             fc = nn.Sequential(
-                  nn.Conv2d(64, 128,
+                  nn.Conv2d(24, 24,
                     kernel_size=3, padding=1, bias=True),
                   nn.ReLU(inplace=True),
-                  nn.Conv2d(128, out_c, 
+                  nn.Conv2d(24, out_c, 
                     kernel_size=1, stride=1, 
                     padding=0, bias=True))
             if 'hm' in head:
@@ -341,10 +187,9 @@ class ShuffleNetV2(nn.Module):
             self.__setattr__(head, fc)
 
     def forward(self, x):
-        t = time.time()
         x = self.first_conv(x)
-        x = self.maxpool(x)
-        x = self.shuff_1(x)
+        x_max = self.maxpool(x)
+        x = self.shuff_1(x_max)
         x = self.shuff_2(x)
         x = self.shuff_3(x)
         x4 = self.shuff_4(x)
@@ -352,22 +197,22 @@ class ShuffleNetV2(nn.Module):
         x = self.shuff_6(x)
         x = self.shuff_7(x)
         x = self.shuff_8(x)
-        x9 = self.shuff_9(x)
-        x = self.shuff_10(x9)
+        
+        x = self.shuff_9(x)
+        x = self.shuff_10(x)
         x = self.shuff_11(x)
-        x = self.shuff_12(x)
-        x = self.shuff_13(x)
+        x12 = self.shuff_12(x)
+        x = self.shuff_13(x12)
+
         x = self.shuff_14(x)
         x = self.shuff_15(x)
         x= self.shuff_16(x)
         x = self.conv_last(x)
-        x = self.decode(x)
-        x9= self.conv_second(x9)
-        x = x9 + x
-        x = self.decode1(x)
-        x4 = self.conv_first(x4)
-        x = x4 + x
-        x = self.decode2(x)
+
+        x = self.up1(x, x12)
+        x = self.up2(x, x4)
+        x = self.up3(x, x_max)
+
         z = {}
         for head in self.heads:
             z[head] = self.__getattr__(head)(x)
@@ -375,39 +220,15 @@ class ShuffleNetV2(nn.Module):
                 z[head] = F.sigmoid(z[head])
         return [z]
 
-        
-    def _initialize_weights(self):
-        for name, m in self.named_modules():
-            if isinstance(m, nn.Conv2d):
-                if 'first' in name:
-                    nn.init.normal_(m.weight, 0, 0.01)
-                else:
-                    nn.init.normal_(m.weight, 0, 1.0 / m.weight.shape[1])
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0.0001)
-                nn.init.constant_(m.running_mean, 0)
-            elif isinstance(m, nn.BatchNorm1d):
-                nn.init.constant_(m.weight, 1)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0.0001)
-                nn.init.constant_(m.running_mean, 0)
-            elif isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, 0, 0.01)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
 
 import time
 from torchsummary import summary
 if __name__ == "__main__":
     
-    model = ShuffleNetV2().cuda()
+    model = ShuffleNetV2()#.cuda()
     model.eval()
-    test_data = torch.rand(1, 3, 640, 640).cuda()
-    summary(model, (3,640, 640))
+    test_data = torch.rand(1, 3, 640, 640)#.cuda()
+    # summary(model, (3,640, 640))
     for i in range(15):
         t = time.time()
         test_outputs = model(test_data) #, test_data_2]

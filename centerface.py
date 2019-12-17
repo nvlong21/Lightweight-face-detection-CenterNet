@@ -2,6 +2,8 @@ import numpy as np
 import cv2
 import datetime
 from model.detnet25 import ShuffleNetV2
+from model.centernet import EfficientNet
+from model.mnet25 import CenterFace_MobileNet
 import torch
 from collections import OrderedDict
 from torchvision import transforms as trans
@@ -10,11 +12,11 @@ class CenterFace(object):
     def __init__(self, height, width, landmarks=True):
         self.landmarks = landmarks
         if self.landmarks:
-            self.net = ShuffleNetV2()
+            self.net = EfficientNet()
             self.cuda = True
             if self.cuda:
                 self.net.cuda()
-            checkpoint = torch.load('out_1/model_epoch_180.pt')
+            checkpoint = torch.load('weights/model_epoch_fn.pt')
             self.net.load_state_dict(checkpoint)
             self.net.eval()
             del checkpoint
@@ -25,8 +27,7 @@ class CenterFace(object):
         self.img_h_new, self.img_w_new, self.scale_h, self.scale_w = self.transform(height, width)
 
     def __call__(self, img, threshold=0.5):
-        
-
+        img = cv2.resize(img, (self.img_w_new, self.img_h_new))
         img = self.transform_img(img)
         img = torch.unsqueeze(img, 0)
         begin = datetime.datetime.now()
@@ -38,7 +39,6 @@ class CenterFace(object):
              out['reg'].detach().cpu().numpy(), out['lm'].detach().cpu().numpy()
         else:
             heatmap, scale, offset = out['hm'], out['wh'], out['reg']
-
         end = datetime.datetime.now()
             
         print("cpu times = ", end - begin)
@@ -48,9 +48,9 @@ class CenterFace(object):
             dets = self.decode(heatmap, scale, offset, None, (self.img_h_new, self.img_w_new), threshold=threshold)
 
         if len(dets) > 0:
-            dets[:, 0:4:2], dets[:, 1:4:2] = dets[:, 0:4:2] , dets[:, 1:4:2] #// self.scale_w, self.scale_h 
+            dets[:, 0:4:2], dets[:, 1:4:2] = dets[:, 0:4:2] // self.scale_w, dets[:, 1:4:2]//self.scale_h  #// self.scale_w, self.scale_h 
             if self.landmarks:
-                lms[:, 0:10:2], lms[:, 1:10:2] = lms[:, 0:10:2] , lms[:, 1:10:2] #/ / self.scale_w , self.scale_h
+                lms[:, 0:10:2], lms[:, 1:10:2] = lms[:, 0:10:2]// self.scale_w , lms[:, 1:10:2] //self.scale_h#/ / self.scale_w , self.scale_h
         else:
             dets = np.empty(shape=[0, 5], dtype=np.float32)
             if self.landmarks:
@@ -67,6 +67,7 @@ class CenterFace(object):
 
     def decode(self, heatmap, scale, offset, landmark, size, threshold=0.1):
         heatmap = np.squeeze(heatmap)
+        print(heatmap.shape)
         scale0, scale1 = scale[0, 0, :, :], scale[0, 1, :, :]
         offset0, offset1 = offset[0, 0, :, :], offset[0, 1, :, :]
         c0, c1 = np.where(heatmap > threshold)
@@ -86,8 +87,9 @@ class CenterFace(object):
                 if self.landmarks:
                     lm = []
                     for j in range(5):
-                        lm.append(landmark[0, j * 2+1, c0[i], c1[i]] * s1 + x1)
-                        lm.append(landmark[0, j * 2, c0[i], c1[i]] * s0 + y1)
+                        lm.append(landmark[0, j * 2, c0[i], c1[i]] * s0 + x1)
+                        lm.append(landmark[0, j * 2+1, c0[i], c1[i]] * s1 + y1)
+                        
                     lms.append(lm)
             boxes = np.asarray(boxes, dtype=np.float32)
             keep = self.nms(boxes[:, :4], boxes[:, 4], 0.3)
