@@ -27,11 +27,11 @@ def camera():
             break
     cap.release()
 
-def test_image():
+def test_image(landmarks=False):
     frame = cv2.imread('imgs/17.jpg')
     # frame = cv2.resize(frame, (640, 640))
     h, w = frame.shape[:2]
-    centerface = CenterFace(h, w, landmarks=False)
+    centerface = CenterFace(h, w, landmarks=landmarks)
     if landmarks:
         dets, lms = centerface(frame, threshold=0.35)
     else:

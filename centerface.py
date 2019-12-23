@@ -1,21 +1,23 @@
 import numpy as np
 import cv2
 import datetime
-from model.detnet25 import ShuffleNetV2
 from model.centernet import EfficientNet
-from model.mnet25 import CenterFace_MobileNet
 import torch
 from collections import OrderedDict
 from torchvision import transforms as trans
 import time
 class CenterFace(object):
-    def __init__(self, height, width, landmarks=True):
+    mean = np.array([0.40789654, 0.44719302, 0.47026115],
+                                     dtype=np.float32).reshape(1, 1, 3)
+    std  = np.array([0.28863828, 0.27408164, 0.27809835],
+                                     dtype=np.float32).reshape(1, 1, 3)
+    def __init__(self, height, width, landmarks=True, cuda = False):
         self.landmarks = landmarks
         self.net = EfficientNet()
-        self.cuda = True
+        self.cuda = cuda
         if self.cuda:
             self.net.cuda()
-        checkpoint = torch.load('weights/model_epoch_fn.pt')
+        checkpoint = torch.load('weights/model_epoch_fn.pt', map_location=lambda storage, loc: storage)
         self.net.load_state_dict(checkpoint)
         self.net.eval()
         del checkpoint
@@ -27,7 +29,11 @@ class CenterFace(object):
 
     def __call__(self, img, threshold=0.5):
         img = cv2.resize(img, (self.img_w_new, self.img_h_new))
-        img = self.transform_img(img)
+        img = (img.astype(np.float32) / 255.)
+        img = (img - self.mean) / self.std
+        img = img.transpose(2, 0, 1)
+        img = torch.FloatTensor(img)
+
         img = torch.unsqueeze(img, 0)
         begin = datetime.datetime.now()
         if self.cuda:
