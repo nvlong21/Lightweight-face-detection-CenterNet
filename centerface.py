@@ -11,19 +11,18 @@ import time
 class CenterFace(object):
     def __init__(self, height, width, landmarks=True):
         self.landmarks = landmarks
-        if self.landmarks:
-            self.net = EfficientNet()
-            self.cuda = True
-            if self.cuda:
-                self.net.cuda()
-            checkpoint = torch.load('weights/model_epoch_fn.pt')
-            self.net.load_state_dict(checkpoint)
-            self.net.eval()
-            del checkpoint
-            self.transform_img = trans.Compose([
-                trans.ToTensor(),
-                trans.Normalize([0.40789654, 0.44719302, 0.47026115], [0.28863828, 0.27408164, 0.27809835])
-            ])
+        self.net = EfficientNet()
+        self.cuda = True
+        if self.cuda:
+            self.net.cuda()
+        checkpoint = torch.load('weights/model_epoch_fn.pt')
+        self.net.load_state_dict(checkpoint)
+        self.net.eval()
+        del checkpoint
+        self.transform_img = trans.Compose([
+            trans.ToTensor(),
+            trans.Normalize([0.40789654, 0.44719302, 0.47026115], [0.28863828, 0.27408164, 0.27809835])
+        ])
         self.img_h_new, self.img_w_new, self.scale_h, self.scale_w = self.transform(height, width)
 
     def __call__(self, img, threshold=0.5):

@@ -31,8 +31,7 @@ def test_image():
     frame = cv2.imread('imgs/17.jpg')
     # frame = cv2.resize(frame, (640, 640))
     h, w = frame.shape[:2]
-    landmarks = True
-    centerface = CenterFace(h, w, landmarks=landmarks)
+    centerface = CenterFace(h, w, landmarks=False)
     if landmarks:
         dets, lms = centerface(frame, threshold=0.35)
     else:
