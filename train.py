@@ -11,9 +11,8 @@ from torch.optim import lr_scheduler
 import torch.distributed as dist
 # import eval_widerface
 import torchvision
-
-from model.centernet import efficientnet_b0
-from model.losses import CtdetLoss, ExdetLoss
+del.centernet import efficientnet_b0
+from model.losses import CtdetLoss
 import os
 from torch.utils.data.distributed import DistributedSampler
 from torch.optim.optimizer import Optimizer, required
@@ -52,12 +51,9 @@ def main(resume = 40):
     if not os.path.exists(log_path):
         os.mkdir(log_path)
 
-    # writer = SummaryWriter(log_dir=log_path)
-
     data_path = args.data_path
     train_path = os.path.join(data_path,'train/label.txt')
     val_path = os.path.join(data_path,'val/label.txt')
-    # dataset_train = TrainDataset(train_path,transform=transforms.Compose([RandomCroper(),RandomFlip()]))
     dataset_train = CenterFaceData(train_path)
     dataloader_train = DataLoader(dataset_train, num_workers=8, batch_size=args.batch, shuffle=True)
 
@@ -68,8 +64,7 @@ def main(resume = 40):
     cuda =  torch.cuda.is_available() 
     device = torch.device("cuda" if cuda else "cpu")
 
-    centerface = efficientnet_b0(True)
-    
+    centerface = efficientnet_b0(True)  
     centerface = centerface.to(device)
 
     if resume:
@@ -105,11 +100,11 @@ def main(resume = 40):
             'lr': 0.001}
         ]
     optimizer = optim.Adam(params, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
-    # if resume:
-    #     state_dict = torch.load('weight/optimizer_epoch_%s.pt'%resume)
-    #     optimizer.load_state_dict(state_dict)
-    #     del state_dict
-    # exp_lr_scheduler = lr_scheduler.MultiStepLR(optimizer, milestones= [25, 75, 120], gamma=0.099)
+    if resume:
+        state_dict = torch.load('weight/optimizer_epoch_%s.pt'%resume)
+        optimizer.load_state_dict(state_dict)
+        del state_dict
+    exp_lr_scheduler = lr_scheduler.MultiStepLR(optimizer, milestones= [25, 75, 120], gamma=0.099)
 
     print('Start to train.')
 
@@ -119,15 +114,14 @@ def main(resume = 40):
 
     loss_fnc = CtdetLoss(device)
     for epoch in range(args.epochs):
-
-        # exp_lr_scheduler.step()
+        exp_lr_scheduler.step()
         if resume:
             if epoch < resume:
                 continue
-        # if epoch>70:
-        #     hm_w, wh_w, off_w, lm_w = 1., 1, 1., 5.
-        # else:
-        hm_w, wh_w, off_w, lm_w = 1., .1, 1., 1.
+        if epoch>70:
+            hm_w, wh_w, off_w, lm_w = 1., 1, 1., 5.
+        else:
+            hm_w, wh_w, off_w, lm_w = 1., .1, 1., 1.
            
         # # Training
         centerface.train()
@@ -155,15 +149,15 @@ def main(resume = 40):
 
                 iteration +=1
 
-        # if epoch % args.eval_step == 0:
-        #     print('-------- centerface Pytorch --------')
-        #     print ('Evaluating epoch {}'.format(epoch))
-        #     recall, precision = eval_widerface.evaluate(dataloader_val, centerface)
-        #     print('Recall:',recall)
-        #     print('Precision:',precision)
+        if epoch % args.eval_step == 0:
+            print('-------- centerface Pytorch --------')
+            print ('Evaluating epoch {}'.format(epoch))
+            recall, precision = eval_widerface.evaluate(dataloader_val, centerface)
+            print('Recall:',recall)
+            print('Precision:',precision)
 
-        #     writer.add_scalar('Recall:', recall, epoch*args.eval_step)
-        #     writer.add_scalar('Precision:', precision, epoch*args.eval_step)
+            writer.add_scalar('Recall:', recall, epoch*args.eval_step)
+            writer.add_scalar('Precision:', precision, epoch*args.eval_step)
 
         # Save model
         if (epoch + 1) % args.save_step == 0:

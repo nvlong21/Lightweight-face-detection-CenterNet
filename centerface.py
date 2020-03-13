@@ -1,7 +1,11 @@
 import numpy as np
 import cv2
 import datetime
+<<<<<<< HEAD
 from model.centernet import efficientnet_b0
+=======
+from model.centernet import EfficientNet
+>>>>>>> d11973b58ae0385e3062fefdd3f53756378dfc95
 import torch
 from collections import OrderedDict
 from torchvision import transforms as trans
@@ -20,7 +24,7 @@ class CenterFace(object):
             self.cuda = True
             if self.cuda:
                 self.net.cuda()
-            checkpoint = torch.load('weight/model_epoch_150.pt')
+            checkpoint = torch.load('weight/model_epoch_100.pt')
             self.net.load_state_dict(checkpoint)
             self.net.eval()
             del checkpoint
@@ -33,6 +37,7 @@ class CenterFace(object):
         img = (img - self.mean) / self.std
         img = img.transpose(2, 0, 1)
         img = torch.FloatTensor(img)
+
         img = torch.unsqueeze(img, 0)
         begin = datetime.datetime.now()
         if self.cuda:
@@ -63,17 +68,7 @@ class CenterFace(object):
             return dets, lms
         else:
             return dets
-        # output = self.model(images)[-1]
-        # hm = output['hm'].sigmoid_()
-        # wh = output['wh']
-        # reg = output['reg'] if self.opt.reg_offset else None
-        # if self.opt.flip_test:
-        # hm = (hm[0:1] + flip_tensor(hm[1:2])) / 2
-        # wh = (wh[0:1] + flip_tensor(wh[1:2])) / 2
-        # reg = reg[0:1] if reg is not None else None
-        # torch.cuda.synchronize()
-        # forward_time = time.time()
-        # dets = ctdet_decode(hm, wh, reg=reg, cat_spec_wh=self.opt.cat_spec_wh, K=self.opt.K)
+
     def pre_process(self, image, scale, meta=None):
         height, width = image.shape[0:2]
 
@@ -109,7 +104,6 @@ class CenterFace(object):
         scale0, scale1 = scale[0, 0, :, :], scale[0, 1, :, :]
         offset0, offset1 = offset[0, 0, :, :], offset[0, 1, :, :]
         c0, c1 = np.where(heatmap > 0.3)
-        print(len(c0))
         if self.landmarks:
             boxes, lms = [], []
         else:
@@ -130,8 +124,7 @@ class CenterFace(object):
                         # lm.append(landmark[0, j * 2, c0[i], c1[i]] * s0 + x1) 
                         # lm.append(landmark[0, j * 2+1, c0[i], c1[i]] * s1 + y1)
                         lm.append((landmark[0, j * 2, c0[i], c1[i]] + c1[i] + 0.5)*4) #+ x1) 
-                        lm.append((landmark[0, j * 2+1, c0[i], c1[i]] + c0[i] + 0.5)*4)
-                        
+                        lm.append((landmark[0, j * 2+1, c0[i], c1[i]] + c0[i] + 0.5)*4)     
                     lms.append(lm)
             boxes = np.asarray(boxes, dtype=np.float32)
             keep = self.nms(boxes[:, :4], boxes[:, 4], 0.3)

@@ -36,7 +36,7 @@ class CenterFaceData(data.Dataset):
                                      dtype=np.float32).reshape(1, 1, 3)
     std  = np.array([0.289, 0.274, 0.278],
                                      dtype=np.float32).reshape(1, 1, 3)
-    def __init__(self,txt_path, split= "train", debug = True):
+    def __init__(self,txt_path, split= "train", debug = False):
         super(CenterFaceData, self).__init__()
         self.imgs_path = []
         self.words = []
@@ -172,7 +172,6 @@ class CenterFaceData(data.Dataset):
                     lm[2:4] = l_tmp[0:2]
                     lm[6:8] = l_tmp[8:10]
                     lm[8:10] = l_tmp[6:8]
-
             bbox[:2] = affine_transform(bbox[:2], trans_output)
             bbox[2:] = affine_transform(bbox[2:], trans_output)
             if lm[0] >= 0:
@@ -181,7 +180,6 @@ class CenterFaceData(data.Dataset):
                 lm[4:6] = affine_transform(lm[4:6], trans_output)
                 lm[6:8] = affine_transform(lm[6:8], trans_output)
                 lm[8:10] = affine_transform(lm[8:10], trans_output)
-
             bbox[[0, 2]] = np.clip(bbox[[0, 2]], 0, output_w - 1)
             bbox[[1, 3]] = np.clip(bbox[[1, 3]], 0, output_h - 1)
 
@@ -213,25 +211,25 @@ class CenterFaceData(data.Dataset):
                     landmarks[k] = lm_temp
                 gt_det.append([4*(ct[0] - w / 2), 4*(ct[1] - h / 2), 
                        4*(ct[0] + w / 2), 4*(ct[1] + h / 2)])
-        # if self.debug :# and ("COCO" in str(self.imgs_path[files_index])):
-        #     print(len(lms), len(bboxes))
-        #     import matplotlib
-        #     matplotlib.use('Agg')
-        #     import matplotlib.pyplot as plt
-        #     for lm, bb in zip(lms, bboxes):
-        #         plt.figure(figsize=(50, 50)) 
+        if self.debug :# and ("COCO" in str(self.imgs_path[files_index])):
+            print(len(lms), len(bboxes))
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            for lm, bb in zip(lms, bboxes):
+                plt.figure(figsize=(50, 50)) 
                 
-        #         if bb[3] - bb[1] > 0 and bb[2] - bb[0] and np.array(np.where(lm > 0)).shape[1] ==10:
-        #             cv2.circle(inp1, (int(lm[0]), int(lm[1])), 2, (255, 0, 0), -1)
-        #             cv2.circle(inp1, (int(lm[2]), int(lm[3])), 2, (255, 255, 0), -1)
-        #             cv2.circle(inp1, (int(lm[4]), int(lm[5])), 2, (255, 155, 155), -1)
-        #             cv2.circle(inp1, (int(lm[6]), int(lm[7])), 2, (255, 0, 255), -1)
-        #             cv2.circle(inp1, (int(lm[8]), int(lm[9])), 2, (65, 86, 255), -1)
-        #             plt.plot(bb[[0, 2, 2, 0, 0]].T, bb[[1, 1, 3, 3, 1]].T, '.-')
-        #     plt.imshow(inp1)
-        #     plt.axis('off')
-        #     plt.savefig('debug/_after%s'%self.imgs_path[index].split("/")[-1])
-        #     time.sleep(10)
+                if bb[3] - bb[1] > 0 and bb[2] - bb[0] and np.array(np.where(lm > 0)).shape[1] ==10:
+                    cv2.circle(inp1, (int(lm[0]), int(lm[1])), 2, (255, 0, 0), -1)
+                    cv2.circle(inp1, (int(lm[2]), int(lm[3])), 2, (255, 255, 0), -1)
+                    cv2.circle(inp1, (int(lm[4]), int(lm[5])), 2, (255, 155, 155), -1)
+                    cv2.circle(inp1, (int(lm[6]), int(lm[7])), 2, (255, 0, 255), -1)
+                    cv2.circle(inp1, (int(lm[8]), int(lm[9])), 2, (65, 86, 255), -1)
+                    plt.plot(bb[[0, 2, 2, 0, 0]].T, bb[[1, 1, 3, 3, 1]].T, '.-')
+            plt.imshow(inp1)
+            plt.axis('off')
+            plt.savefig('debug/_after%s'%self.imgs_path[index].split("/")[-1])
+            time.sleep(10)
 
         ret = {'input': inp, 'hm': hm, 'lm':landmarks,'reg_mask': reg_mask, 'ind': ind, 'wh': wh, 'reg': reg, 'lm_ind': lm_ind, 'lm_mask': lm_mask}
         

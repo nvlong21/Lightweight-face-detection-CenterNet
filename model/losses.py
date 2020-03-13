@@ -378,33 +378,3 @@ class CtdetLoss(torch.nn.Module):
     loss_stats = {'loss': loss, 'hm_loss': hm_loss,
                   'wh_loss': wh_loss, 'off_loss': off_loss, 'lm_loss': lm_loss}
     return loss, loss_stats
-
-class ExdetLoss(torch.nn.Module):
-  def __init__(self, device= None):
-    super(ExdetLoss, self).__init__()
-    self.crit = FocalLoss()
-    self.crit_reg = RegL1Loss()
-    self.parts = ['t', 'l', 'b', 'r', 'c','ml', 'mr', 'n', 'el', 'er']
-
-  def forward(self, outputs, batch):
-
-    hm_loss, reg_loss = 0, 0
-
-    output = outputs[0]
-
-    loss_stats ={}
-
-    for p in self.parts:
-      tag = 'hm_{}'.format(p)
-      output[tag] = _sigmoid(output[str(tag)])
-      _loss = self.crit(output[tag], batch[tag])
-      hm_loss +=  _loss
-      loss_stats[tag] = _loss
-        # if p != 'c' and opt.reg_offset and opt.off_weight > 0:
-        #   reg_loss += self.crit_reg(output['reg_{}'.format(p)], 
-        #                             batch['reg_mask'],
-        #                             batch['ind_{}'.format(p)],
-        #                             batch['reg_{}'.format(p)]) / opt.num_stacks
-    loss = 1 * hm_loss 
-    loss_stats['hm_loss'] = loss
-    return loss, loss_stats
