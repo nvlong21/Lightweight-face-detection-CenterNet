@@ -32,6 +32,9 @@ Retinaface-Mobilenet-0.25 (Mxnet)   |**0.879**|0.807|0.481
 CenterFace |--     |--       |--
 
 
+## Pretrain
+- [CenterFace](https://www.dropbox.com/s/cisvwqjl342xvdg/model_epoch_300.pt?dl=0
+)
 
 ##  Reference
 - [libfacedetection](https://github.com/ShiqiYu/libfacedetection/)

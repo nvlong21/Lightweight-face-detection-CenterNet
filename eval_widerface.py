@@ -2,9 +2,12 @@ import utils
 import numpy as np
 import torch
 import torch.nn as nn
-import os
 from tqdm import tqdm
 import time
+import cv2
+import scipy.io as sio
+import os
+from centerface import CenterFace
 def box_area(boxes):
     """
     Computes the area of a set of bounding boxes, which are specified by its
@@ -19,38 +22,93 @@ def box_area(boxes):
     """
     return (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
 
-
-# implementation from https://github.com/kuangliu/torchcv/blob/master/torchcv/utils/box.py
-# with slight modifications
 def box_iou(boxes1, boxes2):
     """
     Return intersection-over-union (Jaccard index) of boxes.
-
     Both sets of boxes are expected to be in (x1, y1, x2, y2) format.
-
     Arguments:
         boxes1 (Tensor[N, 4])
         boxes2 (Tensor[M, 4])
-
     Returns:
         iou (Tensor[N, M]): the NxM matrix containing the pairwise
             IoU values for every element in boxes1 and boxes2
     """
     area1 = box_area(boxes1)
     area2 = box_area(boxes2)
-    lt = torch.max(boxes1[:, :2], boxes2[:, :2])  # [N,M,2]
-    rb = torch.min(boxes1[:, None,  2:], boxes2[:, 2:4])  # [N,M,2]
+
+    lt = torch.max(boxes1[:, None, :2], boxes2[:, :2])  # [N,M,2]
+    rb = torch.min(boxes1[:, None, 2:], boxes2[:, 2:])  # [N,M,2]
+
     wh = (rb - lt).clamp(min=0)  # [N,M,2]
     inter = wh[:, :, 0] * wh[:, :, 1]  # [N,M]
 
     iou = inter / (area1[:, None] + area2 - inter)
     return iou
 
-def transform(h, w):
-    img_h_new, img_w_new = int(np.ceil(h / 32) * 32), int(np.ceil(w / 32) * 32)
+def bbox_overlap(boxes, query_boxes):
+    N = boxes.shape[0]
+    K = query_boxes.shape[0]
+    overlaps = np.zeros((N, K))
+    for k in range(K):
+        box_area = (
+            (query_boxes[k, 2] - query_boxes[k, 0] + 1) *
+            (query_boxes[k, 3] - query_boxes[k, 1] + 1)
+        )
+        for n in range(N):
+            iw = (
+                min(boxes[n, 2], query_boxes[k, 2]) -
+                max(boxes[n, 0], query_boxes[k, 0]) + 1
+            )
+            if iw > 0:
+                ih = (
+                    min(boxes[n, 3], query_boxes[k, 3]) -
+                    max(boxes[n, 1], query_boxes[k, 1]) + 1
+                )
+                if ih > 0:
+                    ua = float(
+                        (boxes[n, 2] - boxes[n, 0] + 1) *
+                        (boxes[n, 3] - boxes[n, 1] + 1) +
+                        box_area - iw * ih
+                    )
+                    overlaps[n, k] = iw * ih / ua
+    return overlaps
 
-    scale_h, scale_w = img_h_new/ h, img_w_new*1.0 / w
-    return img_h_new, img_w_new, scale_h, scale_w
+def get_detections(data_batch, model, cuda = True, threshold=0.35):
+    model.eval()
+    with torch.no_grad():
+        picked_boxes, picked_landmarks = [], []
+        img_batch = data_batch['input']
+
+        if cuda:
+            img_batch = img_batch.cuda()
+        outputs = model(img_batch)[0]
+        heatmaps, scales, offsets = torch.clamp(outputs['hm'].sigmoid_(), min=1e-4, max=1-1e-4).detach().cpu().numpy(), outputs['wh'].detach().cpu().numpy(), outputs['reg'].detach().cpu().numpy()
+        for i in range(len(img_batch)):
+            heatmap, scale, offset = heatmaps[i], scales[i], offsets[i]
+            dets = decode(heatmap, scale, offset, None, (640, 640), threshold=threshold)
+            picked_boxes.append(dets)
+        return picked_boxes
+
+def decode(heatmap, scale, offset, landmark, size, threshold=0.1):
+    heatmap = np.squeeze(heatmap)
+    scale0, scale1 = scale[0, :, :], scale[1, :, :]
+    offset0, offset1 = offset[0, :, :], offset[1, :, :]
+    c0, c1 = np.where(heatmap > threshold)
+    boxes = []
+    if len(c0) > 0:
+        for i in range(len(c0)):
+            s0, s1 = scale0[c0[i], c1[i]]*4, scale1[c0[i], c1[i]]*4
+            # s0, s1 = np.exp(scale0[c0[i], c1[i]]) * 4, np.exp(scale1[c0[i], c1[i]]) * 4
+            o0, o1 = offset0[c0[i], c1[i]], offset1[c0[i], c1[i]]
+            s = heatmap[c0[i], c1[i]]
+            x1, y1 = max(0, (c1[i] + o1 + 0.5) * 4 - s0 / 2), max(0, (c0[i] + o0 + 0.5) * 4 - s1 / 2)
+            x1, y1 = min(x1, size[1]), min(y1, size[0])
+            boxes.append([x1, y1, min(x1 + s0, size[1]), min(y1 + s1, size[0]), s])
+        boxes = np.asarray(boxes, dtype=np.float32)
+        keep = nms(boxes[:, :4], boxes[:, 4], 0.3)
+        boxes = boxes[keep, :]
+    return boxes
+
 def nms(boxes, scores, nms_thresh):
     x1 = boxes[:, 0]
     y1 = boxes[:, 1]
@@ -92,69 +150,6 @@ def nms(boxes, scores, nms_thresh):
                 suppressed[j] = True
 
     return keep
-def decode(heatmap, scale, offset, landmark, size, threshold=0.1):
-    heatmap = np.squeeze(heatmap)
-    scale =  np.expand_dims(scale,0)
-    offset =  np.expand_dims(offset,0)
-    landmark =  np.expand_dims(landmark,0)
-    scale0, scale1 = scale[0, 0, :, :], scale[0, 1, :, :]
-    offset0, offset1 = offset[0, 0, :, :], offset[0, 1, :, :]
-    c0, c1 = np.where(heatmap > threshold)
-    boxes, lms = [], []
-    if len(c0) > 0:
-        for i in range(len(c0)):
-            s0, s1 = scale0[c0[i], c1[i]] * 4, scale1[c0[i], c1[i]] * 4
-            o0, o1 = offset0[c0[i], c1[i]], offset1[c0[i], c1[i]]
-            s = heatmap[c0[i], c1[i]]
-            x1, y1 = max(0, (c1[i] + o1 + 0.5) * 4 - s0 / 2), max(0, (c0[i] + o0 + 0.5) * 4 - s1 / 2)
-            x1, y1 = min(x1, size[1]), min(y1, size[0])
-            boxes.append([x1, y1, min(x1 + s0, size[1]), min(y1 + s1, size[0]), s])
-            lm = []
-            for j in range(5):
-                lm.append(landmark[0, j * 2 + 1, c0[i], c1[i]] * s1 + x1)
-                lm.append(landmark[0, j * 2, c0[i], c1[i]] * s0 + y1)
-            lms.append(lm)
-        boxes = np.asarray(boxes, dtype=np.float32)
-        keep = nms(boxes[:, :4], boxes[:, 4], 0.3)
-        boxes = boxes[keep, :]
-        lms = np.asarray(lms, dtype=np.float32)
-        lms = lms[keep, :]
-    return boxes, lms
-from torchvision import transforms as trans
-def get_detections(data_batch, model,score_threshold=0.5, iou_threshold=0.5, cuda = True, threshold=0.5):
-
-    model.eval()
-    with torch.no_grad():
-        # imgs = transform_img(imgs)
-        # imgs = torch.unsqueeze(imgs, 0)
-        picked_boxes, picked_landmarks = [], []
-        img_batch = data_batch['input']
-
-        if cuda:
-            img_batch = img_batch.cuda()
-        outputs = model(img_batch)[0]
-
-        batch_size = data_batch['input'].shape[0]
-        for i in range(batch_size):
-            height, width = data_batch['meta']['h'][i], data_batch['meta']['w'][i]
-            img_h_new, img_w_new, scale_h, scale_w = transform(height.cpu().numpy(), width.cpu().numpy())
-
-            heatmap, scale, offset, lms = outputs['hm'][i].detach().cpu().numpy(), \
-                                            outputs['wh'][i].detach().cpu().numpy(), \
-                                            outputs['reg'][i].detach().cpu().numpy(), \
-                                            outputs['lm'][i].detach().cpu().numpy()
-            dets, lms = decode(heatmap, scale, offset, lms, (img_h_new, img_w_new), threshold=threshold)
-
-            if len(dets) > 0:
-                dets[:, 0:4:2], dets[:, 1:4:2] = dets[:, 0:4:2] / scale_w, dets[:, 1:4:2] / scale_h
-                lms[:, 0:10:2], lms[:, 1:10:2] = lms[:, 0:10:2] / scale_w, lms[:, 1:10:2] / scale_h
-            else:
-                dets = np.empty(shape=[0, 5], dtype=np.float32)
-                lms = np.empty(shape=[0, 10], dtype=np.float32)
-            picked_boxes.append(torch.FloatTensor(dets))
-            picked_landmarks.append(lms)
-        return picked_boxes, picked_landmarks
-
 def compute_overlap(a,b):
     area = (b[:, 2] - b[:, 0]) * (b[:, 3] - b[:, 1])
 
@@ -172,23 +167,21 @@ def compute_overlap(a,b):
 
     # (N, K) ndarray of overlap between boxes and query_boxes
     return torch.from_numpy(intersection / ua)    
-
+ 
 
 def evaluate(val_data,model,threshold=0.5):
     recall = 0.
     precision = 0.
     #for i, data in tqdm(enumerate(val_data)):
     for data in tqdm(iter(val_data)):
-        annots = data['meta']['gt_det'].cuda()
-
-        picked_boxes,_ = get_detections(data, model)
+        annots = data['meta']['gt_det']
+        picked_boxes = get_detections(data, model)
         recall_iter = 0.
         precision_iter = 0.
 
         for j, boxes in enumerate(picked_boxes):          
-            annot_boxes = annots[j]
+            annot_boxes = annots[j]#[:keep_ind]
             annot_boxes = annot_boxes[annot_boxes[:,0]!=-1]
-
             if boxes is None and annot_boxes.shape[0] == 0:
                 continue
             elif (boxes is None or len(boxes) < 1) and annot_boxes.shape[0] != 0:
@@ -198,18 +191,16 @@ def evaluate(val_data,model,threshold=0.5):
             elif boxes is not None and annot_boxes.shape[0] == 0:
                 recall_iter += 1.
                 precision_iter += 0.   
-                continue         
-            overlap = box_iou(annot_boxes, boxes.cuda())
+                continue       
+            overlap = bbox_overlap(boxes, annot_boxes)
 
-                 
             # compute recall
-            max_overlap, _ = np.amax(overlap,axis=1)
+            max_overlap, _ = torch.max(torch.FloatTensor(overlap),dim=1)
             mask = max_overlap > threshold
             detected_num = mask.sum().item()
             recall_iter += detected_num/annot_boxes.shape[0]
-
             # compute precision
-            max_overlap, _ = np.amax(overlap,axis=0)
+            max_overlap, _ = torch.max(torch.FloatTensor(overlap),dim=0)
             mask = max_overlap > threshold
             true_positives = mask.sum().item()
             precision_iter += true_positives/boxes.shape[0]

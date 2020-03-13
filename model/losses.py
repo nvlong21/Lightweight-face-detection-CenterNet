@@ -208,7 +208,7 @@ def _reg_loss(regr, gt_regr, mask):
   gt_regr = gt_regr * mask
     
   regr_loss = nn.functional.smooth_l1_loss(regr, gt_regr, size_average=False)
-  regr_loss = regr_loss / (num + 1e-4)
+  regr_loss = regr_loss / (num + 1e-14)
   return regr_loss
 
 class FocalLoss(nn.Module):
@@ -243,6 +243,7 @@ class RegL1Loss(nn.Module):
   def forward(self, output, mask, ind, target):
     pred = _tranpose_and_gather_feat(output, ind)
     mask = mask.unsqueeze(2).expand_as(pred).float()
+    # print(pred - target)
     # loss = F.l1_loss(pred * mask, target * mask, reduction='elementwise_mean')
     loss = F.l1_loss(pred * mask, target * mask, size_average=False)
     loss = loss / (mask.sum() + 1e-4)
@@ -268,7 +269,10 @@ class RegWeightedL1Loss(nn.Module):
   
   def forward(self, output, mask, ind, target):
     pred = _tranpose_and_gather_feat(output, ind)
+    print(pred.size())
     mask = mask.float()
+    print(pred.size())
+
     # loss = F.l1_loss(pred * mask, target * mask, reduction='elementwise_mean')
     loss = F.l1_loss(pred * mask, target * mask, size_average=False)
     loss = loss / (mask.sum() + 1e-4)
@@ -347,32 +351,60 @@ class CtdetLoss(torch.nn.Module):
     self.crit =  FocalLoss() #torch.nn.MSELoss()
     self.crit_reg = RegL1Loss() #if opt.reg_loss == 'l1' else \
               # RegLoss() if opt.reg_loss == 'sl1' else None
-    self.crit_wh = torch.nn.L1Loss(reduction='sum') #if opt.dense_wh else \
-              # NormRegL1Loss() if opt.norm_wh else \
-              # RegWeightedL1Loss() if opt.cat_spec_wh else self.crit_reg
+
     if device is not None:
       self.device = device
     else:
       self.device = None
-    self.smoothl1 = nn.SmoothL1Loss()
-  def forward(self, outputs, batch):
+
+  def forward(self, outputs, batch, hm_w = 1., wh_w = 0.1, off_w = 1., lm_w = 1.):
     hm_loss, wh_loss, off_loss, lm_loss = 0, 0, 0, 0
     for s in range(1):
       output = outputs[s]
       output['hm'] = _sigmoid(output['hm'])
-      hm_loss += self.crit(output['hm'], batch['hm']) 
+      hm_loss += hm_w * self.crit(output['hm'], batch['hm']) 
 
-      wh_loss += self.crit_reg(
+      wh_loss += wh_w * self.crit_reg(
                     output['wh'], batch['reg_mask'],
                     batch['ind'], batch['wh']) 
       
-      off_loss += self.crit_reg(output['reg'], batch['reg_mask'],
+      off_loss += off_w * self.crit_reg(output['reg'], batch['reg_mask'],
                            batch['ind'], batch['reg'])
 
-      lm_loss += self.smoothl1(_tranpose_and_gather_feat(output['lm'], batch['ind']), batch['lm'])
+      lm_loss += lm_w * self.crit_reg(output['lm'], batch['lm_mask'], batch['lm_ind'], batch['lm'])
 
-    loss = 1. * hm_loss + 0.2 * wh_loss + \
-           1. * off_loss + lm_loss
+    loss =  hm_loss +  wh_loss + \
+            off_loss +  lm_loss
     loss_stats = {'loss': loss, 'hm_loss': hm_loss,
-                  'wh_loss': 0.2*wh_loss, 'off_loss': off_loss, 'lm_loss': lm_loss}
+                  'wh_loss': wh_loss, 'off_loss': off_loss, 'lm_loss': lm_loss}
+    return loss, loss_stats
+
+class ExdetLoss(torch.nn.Module):
+  def __init__(self, device= None):
+    super(ExdetLoss, self).__init__()
+    self.crit = FocalLoss()
+    self.crit_reg = RegL1Loss()
+    self.parts = ['t', 'l', 'b', 'r', 'c','ml', 'mr', 'n', 'el', 'er']
+
+  def forward(self, outputs, batch):
+
+    hm_loss, reg_loss = 0, 0
+
+    output = outputs[0]
+
+    loss_stats ={}
+
+    for p in self.parts:
+      tag = 'hm_{}'.format(p)
+      output[tag] = _sigmoid(output[str(tag)])
+      _loss = self.crit(output[tag], batch[tag])
+      hm_loss +=  _loss
+      loss_stats[tag] = _loss
+        # if p != 'c' and opt.reg_offset and opt.off_weight > 0:
+        #   reg_loss += self.crit_reg(output['reg_{}'.format(p)], 
+        #                             batch['reg_mask'],
+        #                             batch['ind_{}'.format(p)],
+        #                             batch['reg_{}'.format(p)]) / opt.num_stacks
+    loss = 1 * hm_loss 
+    loss_stats['hm_loss'] = loss
     return loss, loss_stats

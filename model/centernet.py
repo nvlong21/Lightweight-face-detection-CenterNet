@@ -55,6 +55,20 @@ class ConvBNReLU(nn.Sequential):
         p = max(kernel_size - stride, 0)
         return [p // 2, p - p // 2, p // 2, p - p // 2]
 
+class ConvReLU(nn.Sequential):
+
+    def __init__(self, in_planes, out_planes, kernel_size, stride=1, groups=1):
+        padding = self._get_padding(kernel_size, stride)
+        super(ConvReLU, self).__init__(
+            nn.ZeroPad2d(padding),
+            nn.Conv2d(in_planes, out_planes, kernel_size, stride, padding=0, groups=groups, bias=False),
+            Swish(),
+        )
+
+    def _get_padding(self, kernel_size, stride):
+        p = max(kernel_size - stride, 0)
+        return [p // 2, p - p // 2, p // 2, p - p // 2]
+
 
 class SqueezeExcitation(nn.Module):
 
@@ -93,16 +107,17 @@ class MBConvBlock(nn.Module):
         layers = []
         # pw
         if in_planes != hidden_dim:
-            layers += [ConvBNReLU(in_planes, hidden_dim, 1)]
+            layers += [ConvReLU(in_planes, hidden_dim, 1)]
         layers += [
-            ConvBNReLU(hidden_dim, hidden_dim, kernel_size, stride=stride, groups=hidden_dim),
+            ConvReLU(hidden_dim, hidden_dim, kernel_size, stride=stride, groups=hidden_dim),
         ]
         if se:
             layers += [SqueezeExcitation(hidden_dim, reduced_dim),]
         # pw-linear
         layers += [
             nn.Conv2d(hidden_dim, out_planes, 1, bias=False),
-            nn.BatchNorm2d(out_planes)]
+            # nn.BatchNorm2d(out_planes)
+            ]
 
         self.conv = nn.Sequential(*layers)
 
@@ -165,19 +180,17 @@ def conv_1x1_bn(inp, oup):
     return nn.Sequential(
         nn.Conv2d(inp, oup, 1, 1, 0, bias=False),
         nn.BatchNorm2d(oup),
-        nn.ReLU(inplace=True)
+        Swish()
     )
 
 class IDAUp(nn.Module):
     def __init__(self, out_dim, channel):
         super(IDAUp, self).__init__()
         self.out_dim = out_dim
-        self.up = nn.Sequential(
-                    nn.ConvTranspose2d(
-                        out_dim, out_dim, kernel_size=2, stride=2, padding=0,
-                        output_padding=0, groups=out_dim, bias=False),
-                    nn.BatchNorm2d(out_dim,eps=0.001,momentum=0.1),
-                    nn.ReLU())
+        self.up = nn.ConvTranspose2d(out_dim, out_dim, kernel_size=2, stride=2, padding=0,
+                        output_padding=0, groups=out_dim, bias=False)
+        fill_up_weights(self.up)
+        self.bn_up = nn.BatchNorm2d(out_dim,eps=0.001,momentum=0.1)
         self.conv =  nn.Sequential(
                     nn.Conv2d(channel, out_dim,
                               kernel_size=1, stride=1, bias=False),
@@ -185,7 +198,7 @@ class IDAUp(nn.Module):
                     nn.ReLU(inplace=True))
 
     def forward(self, inpu1, input2):
-        x = self.up(inpu1)
+        x = F.relu(self.bn_up(self.up(inpu1)))
         y = self.conv(input2)
         out = x + y
         return out
@@ -208,7 +221,7 @@ class EfficientNet(nn.Module):
         # yapf: enable
 
         out_channels = _round_filters(32, width_mult)
-        self.first_conv = nn.Sequential(ConvBNReLU(3, out_channels, 3, stride=2)) 
+        self.first_conv = nn.Sequential(ConvReLU(3, out_channels, 3, stride=2)) 
         in_channels = out_channels
         for idx, (t, c, n, s, k) in enumerate(settings):
             layer = []
@@ -235,33 +248,17 @@ class EfficientNet(nn.Module):
             out_c = self.heads[head]
             fc = nn.Sequential(
                   nn.Conv2d(24, 24,
-                    kernel_size=3, padding=1, bias=False),
-                  nn.BatchNorm2d(24,eps=1e-5,momentum=0.01),
-                  nn.ReLU(inplace=True),
+                    kernel_size=3, padding=1, bias=True),
+                  # nn.BatchNorm2d(24,eps=1e-5,momentum=0.01),
+                  # Swish(),
                   nn.Conv2d(24, out_c, 
                     kernel_size=1, stride=1, 
                     padding=0, bias=True))
             if 'hm' in head:
-                fc[-1].bias.data.fill_(-2.19)
+                fc[-1].bias.data.fill_(-1.79)
             else:
                 fill_fc_weights(fc)
             self.__setattr__(head, fc)
-
-        # weight initialization
-        # for m in self.modules():
-        #     if isinstance(m, nn.Conv2d):
-        #         nn.init.kaiming_normal_(m.weight, mode='fan_out')
-        #         if m.bias is not None:
-        #             nn.init.zeros_(m.bias)
-        #     elif isinstance(m, nn.BatchNorm2d):
-        #         nn.init.ones_(m.weight)
-        #         nn.init.zeros_(m.bias)
-        #     elif isinstance(m, nn.Linear):
-        #         fan_out = m.weight.size(0)
-        #         init_range = 1.0 / math.sqrt(fan_out)
-        #         nn.init.uniform_(m.weight, -init_range, init_range)
-        #         if m.bias is not None:
-        #             nn.init.zeros_(m.bias)
 
     def forward(self, x):
         x = self.first_conv(x)
@@ -280,9 +277,6 @@ class EfficientNet(nn.Module):
         z = {}
         for head in self.heads:
             z[head] = self.__getattr__(head)(x)
-            if 'hm' in head and not self.training:
-                z[head] = F.sigmoid(z[head])
-        # print(z['hm'])
         return [z]
 
 
