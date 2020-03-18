@@ -33,7 +33,7 @@ CenterFace |--     |--       |--
 
 
 ## Pretrain
-- [CenterFace](https://www.dropbox.com/s/cisvwqjl342xvdg/model_epoch_300.pt?dl=0
+- [CenterFace](https://github.com/nvlong21/Lightweight-face-detection-CenterNet/tree/master/weight
 )
 
 ##  Reference
