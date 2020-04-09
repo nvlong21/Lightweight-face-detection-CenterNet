@@ -1,11 +1,7 @@
 import numpy as np
 import cv2
 import datetime
-<<<<<<< HEAD
 from model.centernet import efficientnet_b0
-=======
-from model.centernet import EfficientNet
->>>>>>> d11973b58ae0385e3062fefdd3f53756378dfc95
 import torch
 from collections import OrderedDict
 from torchvision import transforms as trans
@@ -69,31 +65,6 @@ class CenterFace(object):
         else:
             return dets
 
-    def pre_process(self, image, scale, meta=None):
-        height, width = image.shape[0:2]
-
-        if self.opt.fix_res:
-          inp_height, inp_width = self.opt.input_h, self.opt.input_w
-          c = np.array([new_width / 2., new_height / 2.], dtype=np.float32)
-          s = max(height, width) * 1.0
-        else:
-          inp_height = (new_height | self.opt.pad) + 1
-          inp_width = (new_width | self.opt.pad) + 1
-          c = np.array([new_width // 2, new_height // 2], dtype=np.float32)
-          s = np.array([inp_width, inp_height], dtype=np.float32)
-
-        trans_input = get_affine_transform(c, s, 0, [inp_width, inp_height])
-        resized_image = cv2.resize(image, (new_width, new_height))
-        inp_image = cv2.warpAffine(
-          resized_image, trans_input, (inp_width, inp_height),
-          flags=cv2.INTER_LINEAR)
-        inp_image = ((inp_image / 255. - self.mean) / self.std).astype(np.float32)
-
-        images = inp_image.transpose(2, 0, 1).reshape(1, 3, inp_height, inp_width)
-        if self.opt.flip_test:
-          images = np.concatenate((images, images[:, :, :, ::-1]), axis=0)
-        images = torch.from_numpy(images)
-        return images
     def transform(self, h, w):
         img_h_new, img_w_new = int(np.ceil(h / 32) * 32), int(np.ceil(w / 32) * 32)
         scale_h, scale_w = img_h_new / h, img_w_new / w
