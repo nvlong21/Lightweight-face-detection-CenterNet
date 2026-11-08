@@ -20,7 +20,7 @@ class CenterFace(object):
             self.cuda = True
             if self.cuda:
                 self.net.cuda()
-            checkpoint = torch.load('weight/model_epoch_100.pt')
+            checkpoint = torch.load('weight/model_epoch_100.pt', weights_only=True)
             self.net.load_state_dict(checkpoint)
             self.net.eval()
             del checkpoint
